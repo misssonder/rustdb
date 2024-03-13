@@ -3,7 +3,6 @@ use crate::error::{RustDBError, RustDBResult};
 use crate::storage::codec::{Decoder, Encoder};
 use crate::storage::page::b_plus_tree::{Internal, InternalHeader, Node};
 use crate::storage::{PageId, RecordId};
-use std::io::Read;
 
 pub struct Index {
     buffer_pool: BufferPoolManager,
