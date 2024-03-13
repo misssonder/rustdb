@@ -1,7 +1,7 @@
 use crate::buffer::lru_k_replacer::LruKReplacer;
 use crate::buffer::FrameId;
 use crate::error::{RustDBError, RustDBResult};
-use crate::storage::codec::{Decoder};
+use crate::storage::codec::{Decoder, Encoder};
 use crate::storage::disk::disk_manager::DiskManager;
 use crate::storage::page::b_plus_tree::Node;
 use crate::storage::page::Page;
@@ -87,18 +87,6 @@ impl BufferPoolManager {
             return Ok(Some(page.clone()));
         }
         Ok(None)
-    }
-
-    pub async fn fetch_page_node<K>(&mut self, page_id: PageId) -> RustDBResult<Node<K>>
-    where
-        K: Decoder<Error = RustDBError>,
-    {
-        let page = self
-            .fetch_page(page_id)
-            .await?
-            .ok_or(RustDBError::BufferPool("Can't fetch page".into()))?;
-        let node = Node::decode(&mut page.read().await.data())?;
-        Ok(node)
     }
 
     pub async fn unpin_page(&mut self, page_id: PageId, is_dirty: bool) -> Option<PageId> {
@@ -187,6 +175,34 @@ impl BufferPoolManager {
     }
     fn allocate_page(&self) -> PageId {
         self.next_page_id.fetch_add(1, Ordering::AcqRel)
+    }
+}
+
+impl BufferPoolManager {
+    pub async fn fetch_page_node<K>(&mut self, page_id: PageId) -> RustDBResult<Node<K>>
+    where
+        K: Decoder<Error = RustDBError>,
+    {
+        let page = self
+            .fetch_page(page_id)
+            .await?
+            .ok_or(RustDBError::BufferPool("Can't fetch page".into()))?;
+        let node = Node::decode(&mut page.read().await.data())?;
+        Ok(node)
+    }
+
+    pub async fn new_page_encode<K>(&mut self, node: &mut Node<K>) -> RustDBResult<PageId>
+    where
+        K: Encoder<Error = RustDBError>,
+    {
+        let page = self
+            .new_page()
+            .await?
+            .ok_or(RustDBError::BufferPool("Can't new page".into()))?;
+        let page_id = page.read().await.page_id();
+        node.set_page_id(page_id);
+        node.encode(&mut page.write().await.mut_data())?;
+        Ok(page_id)
     }
 }
 

@@ -65,8 +65,44 @@ impl<K> Node<K> {
 
     pub fn parent_id(&self) -> PageId {
         match self {
+            Node::Internal(node) => node.header.parent,
+            Node::Leaf(node) => node.header.parent,
+        }
+    }
+
+    pub fn page_id(&self) -> PageId {
+        match self {
             Node::Internal(node) => node.header.page_id,
             Node::Leaf(node) => node.header.page_id,
+        }
+    }
+
+    pub fn set_page_id(&mut self, page_id: PageId) {
+        match self {
+            Node::Internal(internal) => internal.header.page_id = page_id,
+            Node::Leaf(leaf) => leaf.header.page_id = page_id,
+        }
+    }
+    pub fn max_size(&mut self) -> usize {
+        match self {
+            Node::Internal(internal) => internal.header.max_size,
+            Node::Leaf(leaf) => leaf.header.max_size,
+        }
+    }
+
+    pub fn split(&mut self) -> (K, Node<K>)
+    where
+        K: Default,
+    {
+        match self {
+            Node::Internal(ref mut internal) => {
+                let (median_key, sibling) = internal.split();
+                (median_key, Node::Internal(sibling))
+            }
+            Node::Leaf(ref mut leaf) => {
+                let (median_key, sibling) = leaf.split();
+                (median_key, Node::Leaf(sibling))
+            }
         }
     }
 }
@@ -187,13 +223,13 @@ impl<K> Internal<K> {
 
     pub fn split(&mut self) -> (K, Internal<K>)
     where
-        K: Clone,
+        K: Default,
     {
         // index 0 is ignored, so we split kv from max_size/2 +1
         let spilt_at = self.header.max_size / 2 + 1;
 
-        let right_node = self.kv.split_off(spilt_at);
-        let median_key = right_node[0].0.clone();
+        let mut right_node = self.kv.split_off(spilt_at);
+        let median_key = mem::take(&mut right_node[0].0);
         let mut right_node_header = self.header.clone();
         right_node_header.size = right_node.len() - 1;
         self.header.size = self.kv.len() - 1;
@@ -292,6 +328,9 @@ impl<K> Leaf<K> {
 
     pub fn is_full(&self) -> bool {
         self.header.size >= self.header.max_size
+    }
+    pub fn set_next(&mut self, page_id: PageId) {
+        self.header.next = page_id;
     }
 
     pub fn split(&mut self) -> (K, Leaf<K>)
