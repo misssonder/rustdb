@@ -111,7 +111,7 @@ impl Index {
         }
     }
 
-    fn is_root<K>(&self,node:&Node<K>)->bool{
+    fn is_root<K>(&self, node: &Node<K>) -> bool {
         self.root.eq(&node.page_id())
     }
 }

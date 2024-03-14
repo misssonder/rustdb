@@ -1,6 +1,6 @@
 use crate::error::RustDBError;
 use crate::storage::codec::{Decoder, Encoder};
-use crate::storage::{PageId, RecordId};
+use crate::storage::{PageId, RecordId, NULL_PAGE};
 use bytes::{Buf, BufMut};
 use std::cmp::Ordering;
 use std::mem;
@@ -110,6 +110,69 @@ impl<K> Node<K> {
                 (median_key, Node::Leaf(sibling))
             }
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Header {
+    pub size: usize,
+    pub max_size: usize,
+    pub parent: Option<PageId>,
+    pub page_id: PageId,
+    pub next: Option<PageId>,
+    pub prev: Option<PageId>,
+}
+
+impl Encoder for Header {
+    type Error = RustDBError;
+
+    fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
+    where
+        B: BufMut,
+    {
+        buf.put_u64(self.size as _);
+        buf.put_u64(self.max_size as _);
+        match self.parent {
+            None => buf.put_u64(NULL_PAGE as _),
+            Some(parent) => buf.put_u64(parent as _),
+        }
+        buf.put_u64(self.page_id as _);
+        match self.next {
+            None => buf.put_u64(NULL_PAGE as _),
+            Some(next) => buf.put_u64(next as _),
+        }
+        match self.prev {
+            None => buf.put_u64(NULL_PAGE as _),
+            Some(prev) => buf.put_u64(prev as _),
+        }
+        Ok(())
+    }
+}
+
+impl Decoder for Header {
+    type Error = RustDBError;
+
+    fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
+    where
+        B: Buf,
+    {
+        Ok(Header {
+            size: buf.get_u64() as _,
+            max_size: buf.get_u64() as _,
+            parent: match buf.get_u64() as PageId {
+                NULL_PAGE => None,
+                other => Some(other),
+            },
+            page_id: buf.get_u64() as _,
+            next: match buf.get_u64() as PageId {
+                NULL_PAGE => None,
+                other => Some(other),
+            },
+            prev: match buf.get_u64() as PageId {
+                NULL_PAGE => None,
+                other => Some(other),
+            },
+        })
     }
 }
 
