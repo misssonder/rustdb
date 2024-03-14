@@ -469,6 +469,25 @@ mod tests {
     }
 
     #[test]
+    fn test_header_decode_encode() -> RustDBResult<()> {
+        let header = Header {
+            size: 1,
+            max_size: 2,
+            parent: None,
+            page_id: 4,
+            next: Some(5),
+            prev: Some(6),
+        };
+        let mut buffer = [0; PAGE_SIZE];
+        header.encode(&mut buffer.as_mut())?;
+        let new_header1 = Header::decode(&mut buffer.as_ref())?;
+        let new_header2 = Header::decode(&mut buffer.as_ref())?;
+        assert_eq!(header, new_header1);
+        assert_eq!(header, new_header1);
+        Ok(())
+    }
+
+    #[test]
     fn test_internal_decode_encode() -> RustDBResult<()> {
         let len = 100;
         let mut kv = Vec::with_capacity(len);
