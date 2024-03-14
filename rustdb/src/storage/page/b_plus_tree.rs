@@ -56,10 +56,16 @@ where
 }
 
 impl<K> Node<K> {
-    pub fn is_full(&self) -> bool {
+    pub fn is_overflow(&self) -> bool {
         match self {
-            Node::Internal(internal) => internal.header.size == internal.header.max_size,
-            Node::Leaf(leaf) => leaf.is_full(),
+            Node::Internal(internal) => internal.is_overflow(),
+            Node::Leaf(leaf) => leaf.is_overflow(),
+        }
+    }
+    pub fn is_underflow(&self) -> bool {
+        match self {
+            Node::Internal(internal) => internal.is_underflow(),
+            Node::Leaf(leaf) => leaf.is_underflow(),
         }
     }
 
@@ -109,6 +115,7 @@ impl<K> Node<K> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct InternalHeader {
+    // the size of key
     pub size: usize,
     pub max_size: usize,
     pub parent: PageId,
@@ -216,9 +223,14 @@ impl<K> Internal<K> {
         }
     }
 
-    pub fn is_full(&self) -> bool {
+    pub fn is_overflow(&self) -> bool {
         // the max length of the key is m - 1
-        self.header.size > self.header.max_size
+        self.header.size > self.header.max_size - 1
+    }
+
+    pub fn is_underflow(&self) -> bool {
+        // the max length of the key is m - 1
+        self.header.size < self.header.max_size / 2
     }
 
     pub fn split(&mut self) -> (K, Internal<K>)
@@ -326,8 +338,12 @@ impl<K> Leaf<K> {
         }
     }
 
-    pub fn is_full(&self) -> bool {
-        self.header.size >= self.header.max_size
+    pub fn is_overflow(&self) -> bool {
+        self.header.size > self.header.max_size - 1
+    }
+
+    pub fn is_underflow(&self) -> bool {
+        self.header.size < self.header.max_size / 2
     }
     pub fn set_next(&mut self, page_id: PageId) {
         self.header.next = page_id;

@@ -45,14 +45,14 @@ impl Index {
                 Err(index) => leaf.kv.insert(index, (key.clone(), value.clone())),
             },
         }
-        if node.is_full() {
+        if node.is_overflow() {
             let (median_key, mut sibling) = node.split();
             let sibling_page_id = self.buffer_pool.new_page_encode(&mut sibling).await?;
             if let Node::Leaf(ref mut leaf) = node {
                 leaf.set_next(sibling_page_id);
             }
             // todo unpin
-            let mut parent_node: Node<K> = if node.page_id().eq(&self.root) {
+            let mut parent_node: Node<K> = if self.is_root(&node) {
                 let mut parent_node = Node::Internal(Internal {
                     header: InternalHeader {
                         size: 1,
@@ -109,5 +109,9 @@ impl Index {
                 }
             }
         }
+    }
+
+    fn is_root<K>(&self,node:&Node<K>)->bool{
+        self.root.eq(&node.page_id())
     }
 }
