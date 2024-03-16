@@ -210,7 +210,7 @@ impl Decoder for Header {
  * ----------------------------------------------------------------------------------
  */
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Internal<K> {
     pub header: Header,
     pub kv: Vec<(K, PageId)>,
@@ -287,7 +287,7 @@ impl<K> Internal<K> {
 
     pub fn is_underflow(&self) -> bool {
         // the max length of the key is m - 1
-        self.header.size < self.header.max_size / 2
+        self.parent().is_some() && self.header.size < self.header.max_size / 2
     }
 
     pub fn max_size(&self) -> usize {
@@ -345,6 +345,26 @@ impl<K> Internal<K> {
             },
         )
     }
+
+    pub fn steal_first(&mut self) -> Option<(K, PageId)> {
+        if self.allow_steal() {
+            self.header.size -= 1;
+            return Some(self.kv.remove(0));
+        }
+        None
+    }
+
+    pub fn steal_last(&mut self) -> Option<(K, PageId)> {
+        if self.allow_steal() {
+            self.header.size -= 1;
+            return self.kv.pop();
+        }
+        None
+    }
+
+    fn allow_steal(&self) -> bool {
+        self.header.size > self.header.max_size / 2
+    }
 }
 
 /**
@@ -363,7 +383,7 @@ impl<K> Internal<K> {
  * -----------------------------------------------------------------------
  */
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Leaf<K> {
     pub header: Header,
     pub kv: Vec<(K, RecordId)>,
@@ -425,7 +445,7 @@ impl<K> Leaf<K> {
     }
 
     pub fn is_underflow(&self) -> bool {
-        self.header.size < self.header.max_size / 2
+        self.parent().is_some() && self.header.size < self.header.max_size / 2
     }
 
     pub fn max_size(&self) -> usize {
@@ -463,6 +483,19 @@ impl<K> Leaf<K> {
         self.header.prev
     }
 
+    pub fn remove(&mut self, key: &K) -> Option<(K, RecordId)>
+    where
+        K: Ord,
+    {
+        match self.kv.binary_search_by(|(k, _)| k.cmp(&key)) {
+            Ok(index) => {
+                self.header.size -= 1;
+                Some(self.kv.remove(index))
+            }
+            Err(_) => None,
+        }
+    }
+
     pub fn split(&mut self) -> (K, Leaf<K>)
     where
         K: Default,
@@ -480,6 +513,26 @@ impl<K> Leaf<K> {
                 kv: sibling_kv,
             },
         )
+    }
+
+    pub fn steal_first(&mut self) -> Option<(K, RecordId)> {
+        if self.allow_steal() {
+            self.header.size -= 1;
+            return Some(self.kv.remove(0));
+        }
+        None
+    }
+
+    pub fn steal_last(&mut self) -> Option<(K, RecordId)> {
+        if self.allow_steal() {
+            self.header.size -= 1;
+            return self.kv.pop();
+        }
+        None
+    }
+
+    fn allow_steal(&self) -> bool {
+        self.header.size > self.header.max_size / 2
     }
 }
 
