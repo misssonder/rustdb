@@ -1,7 +1,7 @@
 use crate::buffer::buffer_poll_manager::BufferPoolManager;
 use crate::error::{RustDBError, RustDBResult};
 use crate::storage::codec::{Decoder, Encoder};
-use crate::storage::page::b_plus_tree::{Internal, InternalHeader, Node};
+use crate::storage::page::b_plus_tree::{Header, Internal, Node};
 use crate::storage::{PageId, RecordId};
 
 pub struct Index {
@@ -48,17 +48,20 @@ impl Index {
         if node.is_overflow() {
             let (median_key, mut sibling) = node.split();
             let sibling_page_id = self.buffer_pool.new_page_encode(&mut sibling).await?;
-            if let Node::Leaf(ref mut leaf) = node {
-                leaf.set_next(sibling_page_id);
-            }
+            node.set_next(sibling.page_id());
+            sibling.set_prev(node.page_id());
             // todo unpin
-            let mut parent_node: Node<K> = if self.is_root(&node) {
+            let mut parent_node = if let Some(parent_id) = node.parent() {
+                self.buffer_pool.fetch_page_node(parent_id).await?
+            } else {
                 let mut parent_node = Node::Internal(Internal {
-                    header: InternalHeader {
+                    header: Header {
                         size: 1,
                         max_size: node.max_size(),
-                        parent: PageId::MAX,
+                        parent: None,
                         page_id: 0,
+                        next: None,
+                        prev: None,
                     },
                     kv: vec![
                         (K::default(), node.page_id()),
@@ -66,9 +69,10 @@ impl Index {
                     ],
                 });
                 self.buffer_pool.new_page_encode(&mut parent_node).await?;
+                node.set_parent(parent_node.page_id());
+                sibling.set_parent(parent_node.page_id());
+                self.root = parent_node.page_id();
                 parent_node
-            } else {
-                self.buffer_pool.fetch_page_node(node.parent_id()).await?
             };
             match parent_node {
                 Node::Internal(ref mut internal) => {

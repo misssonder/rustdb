@@ -69,30 +69,50 @@ impl<K> Node<K> {
         }
     }
 
-    pub fn parent_id(&self) -> PageId {
+    pub fn parent(&self) -> Option<PageId> {
         match self {
-            Node::Internal(node) => node.header.parent,
-            Node::Leaf(node) => node.header.parent,
+            Node::Internal(node) => node.parent(),
+            Node::Leaf(node) => node.parent(),
+        }
+    }
+    pub fn set_parent(&mut self, page_id: PageId) {
+        match self {
+            Node::Internal(node) => node.set_parent(page_id),
+            Node::Leaf(node) => node.set_parent(page_id),
         }
     }
 
     pub fn page_id(&self) -> PageId {
         match self {
-            Node::Internal(node) => node.header.page_id,
-            Node::Leaf(node) => node.header.page_id,
+            Node::Internal(node) => node.page_id(),
+            Node::Leaf(node) => node.page_id(),
+        }
+    }
+
+    pub fn set_next(&mut self, page_id: PageId) {
+        match self {
+            Node::Internal(node) => node.set_next(page_id),
+            Node::Leaf(node) => node.set_next(page_id),
+        }
+    }
+
+    pub fn set_prev(&mut self, page_id: PageId) {
+        match self {
+            Node::Internal(node) => node.set_prev(page_id),
+            Node::Leaf(node) => node.set_prev(page_id),
         }
     }
 
     pub fn set_page_id(&mut self, page_id: PageId) {
         match self {
-            Node::Internal(internal) => internal.header.page_id = page_id,
-            Node::Leaf(leaf) => leaf.header.page_id = page_id,
+            Node::Internal(internal) => internal.set_page_id(page_id),
+            Node::Leaf(leaf) => leaf.set_page_id(page_id),
         }
     }
     pub fn max_size(&mut self) -> usize {
         match self {
-            Node::Internal(internal) => internal.header.max_size,
-            Node::Leaf(leaf) => leaf.header.max_size,
+            Node::Internal(internal) => internal.max_size(),
+            Node::Leaf(leaf) => leaf.max_size(),
         }
     }
 
@@ -176,24 +196,6 @@ impl Decoder for Header {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct InternalHeader {
-    // the size of key
-    pub size: usize,
-    pub max_size: usize,
-    pub parent: PageId,
-    pub page_id: PageId,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct LeafHeader {
-    pub size: usize,
-    pub max_size: usize,
-    pub parent: PageId,
-    pub page_id: PageId,
-    next: PageId,
-}
-
 /**
  * Store `n` indexed keys and `n + 1` child pointers (page_id) within internal page.
  * Pointer PAGE_ID(i) points to a subtree in which all keys K satisfy:
@@ -210,7 +212,7 @@ pub struct LeafHeader {
 
 #[derive(Debug, PartialEq)]
 pub struct Internal<K> {
-    pub header: InternalHeader,
+    pub header: Header,
     pub kv: Vec<(K, PageId)>,
 }
 
@@ -224,12 +226,7 @@ where
     where
         B: Buf,
     {
-        let header = InternalHeader {
-            size: buf.get_u64() as _,
-            max_size: buf.get_u64() as _,
-            parent: buf.get_u64() as _,
-            page_id: buf.get_u64() as _,
-        };
+        let header = Header::decode(buf)?;
         let mut kv = Vec::with_capacity(header.size);
         for _ in 0..header.size {
             let k = K::decode(buf)?;
@@ -250,10 +247,7 @@ where
     where
         B: BufMut,
     {
-        buf.put_u64(self.header.size as _);
-        buf.put_u64(self.header.max_size as _);
-        buf.put_u64(self.header.parent as _);
-        buf.put_u64(self.header.page_id as _);
+        self.header.encode(buf)?;
         for (k, v) in self.kv.iter() {
             k.encode(buf)?;
             buf.put_u64(*v as _)
@@ -296,6 +290,41 @@ impl<K> Internal<K> {
         self.header.size < self.header.max_size / 2
     }
 
+    pub fn max_size(&self) -> usize {
+        self.header.max_size
+    }
+
+    pub fn page_id(&self) -> PageId {
+        self.header.page_id
+    }
+    pub fn set_page_id(&mut self, page_id: PageId) {
+        self.header.page_id = page_id
+    }
+
+    pub fn set_parent(&mut self, page_id: PageId) {
+        self.header.parent = Some(page_id);
+    }
+
+    pub fn parent(&self) -> Option<PageId> {
+        self.header.parent
+    }
+
+    pub fn set_next(&mut self, page_id: PageId) {
+        self.header.next = Some(page_id);
+    }
+
+    pub fn next(&self) -> Option<PageId> {
+        self.header.next
+    }
+
+    pub fn set_prev(&mut self, page_id: PageId) {
+        self.header.prev = Some(page_id);
+    }
+
+    pub fn prev(&self) -> Option<PageId> {
+        self.header.prev
+    }
+
     pub fn split(&mut self) -> (K, Internal<K>)
     where
         K: Default,
@@ -303,16 +332,16 @@ impl<K> Internal<K> {
         // index 0 is ignored, so we split kv from max_size/2 +1
         let spilt_at = self.header.max_size / 2 + 1;
 
-        let mut right_node = self.kv.split_off(spilt_at);
-        let median_key = mem::take(&mut right_node[0].0);
-        let mut right_node_header = self.header.clone();
-        right_node_header.size = right_node.len() - 1;
+        let mut sibling_kv = self.kv.split_off(spilt_at);
+        let median_key = mem::take(&mut sibling_kv[0].0);
+        let mut sibling_header = self.header.clone();
         self.header.size = self.kv.len() - 1;
+        sibling_header.size = sibling_kv.len() - 1;
         (
             median_key,
             Internal {
-                header: right_node_header,
-                kv: right_node,
+                header: sibling_header,
+                kv: sibling_kv,
             },
         )
     }
@@ -336,7 +365,7 @@ impl<K> Internal<K> {
 
 #[derive(Debug, PartialEq)]
 pub struct Leaf<K> {
-    pub header: LeafHeader,
+    pub header: Header,
     pub kv: Vec<(K, RecordId)>,
 }
 
@@ -350,13 +379,7 @@ where
     where
         B: Buf,
     {
-        let header = LeafHeader {
-            size: buf.get_u64() as _,
-            max_size: buf.get_u64() as _,
-            parent: buf.get_u64() as _,
-            page_id: buf.get_u64() as _,
-            next: buf.get_u64() as _,
-        };
+        let header = Header::decode(buf)?;
         let mut kv = Vec::with_capacity(header.size);
         for _ in 0..header.size {
             let k = K::decode(buf)?;
@@ -377,11 +400,7 @@ where
     where
         B: BufMut,
     {
-        buf.put_u64(self.header.size as _);
-        buf.put_u64(self.header.max_size as _);
-        buf.put_u64(self.header.parent as _);
-        buf.put_u64(self.header.page_id as _);
-        buf.put_u64(self.header.next as _);
+        self.header.encode(buf)?;
         for (k, v) in self.kv.iter() {
             k.encode(buf)?;
             v.encode(buf)?;
@@ -408,8 +427,40 @@ impl<K> Leaf<K> {
     pub fn is_underflow(&self) -> bool {
         self.header.size < self.header.max_size / 2
     }
+
+    pub fn max_size(&self) -> usize {
+        self.header.max_size
+    }
+
+    pub fn page_id(&self) -> PageId {
+        self.header.page_id
+    }
+    pub fn set_page_id(&mut self, page_id: PageId) {
+        self.header.page_id = page_id
+    }
+
+    pub fn set_parent(&mut self, page_id: PageId) {
+        self.header.parent = Some(page_id);
+    }
+
+    pub fn parent(&self) -> Option<PageId> {
+        self.header.parent
+    }
+
     pub fn set_next(&mut self, page_id: PageId) {
-        self.header.next = page_id;
+        self.header.next = Some(page_id);
+    }
+
+    pub fn next(&self) -> Option<PageId> {
+        self.header.next
+    }
+
+    pub fn set_prev(&mut self, page_id: PageId) {
+        self.header.prev = Some(page_id);
+    }
+
+    pub fn prev(&self) -> Option<PageId> {
+        self.header.prev
     }
 
     pub fn split(&mut self) -> (K, Leaf<K>)
@@ -417,16 +468,16 @@ impl<K> Leaf<K> {
         K: Default,
     {
         let spilt_at = self.header.max_size / 2;
-        let mut right_node = self.kv.split_off(spilt_at);
-        let median_key = mem::take(&mut right_node[0].0);
-        let mut right_node_header = self.header.clone();
-        right_node_header.size = right_node.len();
+        let mut sibling_kv = self.kv.split_off(spilt_at);
+        let median_key = mem::take(&mut sibling_kv[0].0);
+        let mut sibling_header = self.header.clone();
         self.header.size = self.kv.len();
+        sibling_header.size = sibling_kv.len();
         (
             median_key,
             Leaf {
-                header: right_node_header,
-                kv: right_node,
+                header: sibling_header,
+                kv: sibling_kv,
             },
         )
     }
@@ -483,7 +534,7 @@ mod tests {
         let new_header1 = Header::decode(&mut buffer.as_ref())?;
         let new_header2 = Header::decode(&mut buffer.as_ref())?;
         assert_eq!(header, new_header1);
-        assert_eq!(header, new_header1);
+        assert_eq!(header, new_header2);
         Ok(())
     }
 
@@ -495,11 +546,13 @@ mod tests {
             kv.push((Key { data: i as u32 }, i))
         }
         let tree = Node::Internal(Internal {
-            header: InternalHeader {
+            header: Header {
                 size: len,
                 max_size: len,
-                parent: 1,
+                parent: Some(1),
                 page_id: 2,
+                next: Some(5),
+                prev: Some(6),
             },
             kv,
         });
@@ -528,12 +581,13 @@ mod tests {
             ))
         }
         let tree = Node::Leaf(Leaf {
-            header: LeafHeader {
+            header: Header {
                 size: len,
                 max_size: len,
-                parent: 1,
+                parent: Some(2),
                 page_id: 3,
-                next: 2,
+                next: Some(9),
+                prev: Some(8),
             },
             kv,
         });

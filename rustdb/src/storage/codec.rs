@@ -1,4 +1,3 @@
-use crate::storage::PageId;
 use bytes::{Buf, BufMut};
 
 pub trait Encoder: Sized {
