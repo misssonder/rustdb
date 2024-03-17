@@ -4,7 +4,7 @@ use crate::error::{RustDBError, RustDBResult};
 use crate::storage::codec::{Decoder, Encoder};
 use crate::storage::disk::disk_manager::DiskManager;
 use crate::storage::page::b_plus_tree::Node;
-use crate::storage::page::Page;
+use crate::storage::page::{Page, PageRef};
 use crate::storage::PageId;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -87,6 +87,13 @@ impl BufferPoolManager {
             return Ok(Some(page.clone()));
         }
         Ok(None)
+    }
+
+    pub async fn fetch_page_ref(&mut self, page_id: PageId) -> RustDBResult<Option<PageRef>> {
+        Ok(self
+            .fetch_page(page_id)
+            .await?
+            .map(|page| PageRef::new(page)))
     }
 
     pub async fn unpin_page(&mut self, page_id: PageId, is_dirty: bool) -> Option<PageId> {
