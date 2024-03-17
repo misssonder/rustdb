@@ -58,6 +58,22 @@ impl BufferPoolManager {
         Ok(None)
     }
 
+    pub async fn new_page_ref(&mut self) -> RustDBResult<Option<PageRef>> {
+        if let Some(frame_id) = self.available_frame().await? {
+            let page_id = self.allocate_page();
+            let mut page = Page::new(page_id);
+            page.pin_count = 1;
+            self.pages.insert(frame_id, Arc::new(RwLock::new(page)));
+            self.page_table.insert(page_id, frame_id);
+            self.replacer.record_access(frame_id);
+            self.replacer.set_evictable(frame_id, false);
+            return Ok(self
+                .pages
+                .get(frame_id)
+                .map(|page| PageRef::new(page.clone())));
+        }
+        Ok(None)
+    }
     pub async fn fetch_page(&mut self, page_id: PageId) -> RustDBResult<Option<Arc<RwLock<Page>>>> {
         // fetch page from cache
         if let Some(frame_id) = self.page_table.get(&page_id) {
@@ -190,26 +206,24 @@ impl BufferPoolManager {
     where
         K: Decoder<Error = RustDBError>,
     {
-        let page = self
-            .fetch_page(page_id)
+        self.fetch_page_ref(page_id)
             .await?
-            .ok_or(RustDBError::BufferPool("Can't fetch page".into()))?;
-        let node = Node::decode(&mut page.read().await.data())?;
-        Ok(node)
+            .ok_or(RustDBError::BufferPool("Can't fetch page".into()))?
+            .read()
+            .await
+            .node()
     }
 
     pub async fn encode_page_node<K>(&mut self, node: &Node<K>) -> RustDBResult<()>
     where
         K: Encoder<Error = RustDBError>,
     {
-        let page_id = node.page_id();
-        let page = self
-            .fetch_page(node.page_id())
+        self.fetch_page_ref(node.page_id())
             .await?
-            .ok_or(RustDBError::BufferPool("Can't fetch page".into()))?;
-        node.encode(&mut page.write().await.mut_data())?;
-        self.unpin_page(page_id, true).await;
-        Ok(())
+            .ok_or(RustDBError::BufferPool("Can't fetch page".into()))?
+            .write()
+            .await
+            .write_back(node)
     }
 
     pub async fn new_page_encode<K>(&mut self, node: &mut Node<K>) -> RustDBResult<PageId>
@@ -217,7 +231,7 @@ impl BufferPoolManager {
         K: Encoder<Error = RustDBError>,
     {
         let page = self
-            .new_page()
+            .new_page_ref()
             .await?
             .ok_or(RustDBError::BufferPool("Can't new page".into()))?;
         let page_id = page.read().await.page_id();

@@ -4,7 +4,7 @@ use crate::error::{RustDBError, RustDBResult};
 use crate::storage::codec::{Decoder, Encoder};
 use crate::storage::page::b_plus_tree::Node;
 use crate::storage::{PageId, PAGE_SIZE};
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 use tokio::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
@@ -94,6 +94,12 @@ impl Deref for PageWriteGuard<'_> {
 
     fn deref(&self) -> &Self::Target {
         self.guard.deref()
+    }
+}
+
+impl DerefMut for PageWriteGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.guard.deref_mut()
     }
 }
 
