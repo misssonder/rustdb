@@ -36,6 +36,9 @@ pub struct LruReplacer<K> {
     tail: *mut LruEntry<K>,
 }
 
+unsafe impl<K> Send for LruReplacer<K> where K: Send {}
+unsafe impl<K> Sync for LruReplacer<K> where K: Sync {}
+
 impl<K> LruReplacer<K>
 where
     K: Hash,
