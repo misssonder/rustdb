@@ -1,12 +1,14 @@
 use crate::buffer::buffer_poll_manager::BufferPoolManager;
 use crate::error::{RustDBError, RustDBResult};
 use crate::storage::codec::{Decoder, Encoder};
-use crate::storage::page::b_plus_tree::{Header, Internal, Node};
+use crate::storage::page::b_plus_tree::{Header, Internal, Leaf, Node};
 use crate::storage::{PageId, RecordId};
 
 pub struct Index {
     buffer_pool: BufferPoolManager,
     root: PageId,
+    init: bool,
+    max_size: usize,
 }
 
 impl Index {
@@ -14,8 +16,10 @@ impl Index {
     where
         K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord,
     {
-        if let Node::Leaf(ref leaf) = self.find_leaf(key).await? {
-            return Ok(leaf.search(key));
+        if self.init {
+            if let Node::Leaf(ref leaf) = self.find_leaf(key).await? {
+                return Ok(leaf.search(key));
+            }
         }
         Ok(None)
     }
@@ -24,6 +28,10 @@ impl Index {
     where
         K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord + Default + Clone,
     {
+        if !self.init {
+            self.init_tree(key, value).await?;
+            return Ok(());
+        }
         let node = self.find_leaf(&key).await?;
         self.insert_inner(node, key, value).await?;
         Ok(())
@@ -42,17 +50,20 @@ impl Index {
     where
         K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord + Default + Clone,
     {
-        match node {
-            Node::Internal(ref mut internal) => {}
-            Node::Leaf(ref mut leaf) => {
-                match leaf.kv.binary_search_by(|(k, _)| k.cmp(&key)) {
-                    Ok(index) => leaf.kv[index] = (key.clone(), value.clone()),
-                    Err(index) => leaf.kv.insert(index, (key.clone(), value.clone())),
-                };
-                self.buffer_pool.encode_page_node(&node).await?;
+        loop {
+            match node {
+                Node::Internal(ref mut internal) => {}
+                Node::Leaf(ref mut leaf) => {
+                    match leaf.kv.binary_search_by(|(k, _)| k.cmp(&key)) {
+                        Ok(index) => leaf.kv[index] = (key.clone(), value.clone()),
+                        Err(index) => leaf.kv.insert(index, (key.clone(), value.clone())),
+                    };
+                    self.buffer_pool.encode_page_node(&node).await?;
+                }
             }
-        }
-        if node.is_overflow() {
+            if !node.is_overflow() {
+                return Ok(());
+            }
             let (median_key, mut sibling) = node.split();
             let sibling_page_id = self.buffer_pool.new_page_encode(&mut sibling).await?;
             node.set_next(sibling.page_id());
@@ -95,13 +106,11 @@ impl Index {
                     self.buffer_pool.encode_page_node(&node).await?;
                     self.buffer_pool.encode_page_node(&sibling).await?;
                     self.buffer_pool.encode_page_node(&parent_node).await?;
-                    self.insert_inner(parent_node, key.clone(), value.clone())
-                        .await?;
+                    node = parent_node;
                 }
                 Node::Leaf(_) => unreachable!(),
             }
         }
-        Ok(())
     }
 
     pub async fn delete_inner<K>(
@@ -246,5 +255,63 @@ impl Index {
 
     fn is_root<K>(&self, node: &Node<K>) -> bool {
         self.root.eq(&node.page_id())
+    }
+
+    async fn init_tree<K>(&mut self, key: K, value: RecordId) -> RustDBResult<()>
+    where
+        K: Encoder<Error = RustDBError>,
+    {
+        let node = Node::Leaf(Leaf {
+            header: Header {
+                size: 1,
+                max_size: self.max_size,
+                parent: None,
+                page_id: 0,
+                next: None,
+                prev: None,
+            },
+            kv: vec![(key, value)],
+        });
+        self.init = true;
+        let page = self
+            .buffer_pool
+            .new_page_ref()
+            .await?
+            .ok_or(RustDBError::BufferPool("Can't new page".into()))?;
+        page.write().await.write_back(&node)?;
+        self.init = true;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::disk::disk_manager::DiskManager;
+
+    #[tokio::test]
+    async fn test_insert() -> RustDBResult<()> {
+        let db_name = "test_insert.db";
+        let disk_manager = DiskManager::new(db_name).await?;
+        let buffer_pool_manager = BufferPoolManager::new(10, 2, disk_manager).await?;
+        let mut index = Index {
+            buffer_pool: buffer_pool_manager,
+            root: 0,
+            init: false,
+            max_size: 4,
+        };
+        index
+            .insert(
+                0u32,
+                RecordId {
+                    page_id: 0,
+                    slot_num: 0,
+                },
+            )
+            .await?;
+        let val = index.search(&0).await?;
+        assert!(val.is_some());
+        tokio::fs::remove_file(db_name).await?;
+        Ok(())
     }
 }
