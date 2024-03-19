@@ -64,7 +64,7 @@ impl Index {
     {
         loop {
             match node {
-                Node::Internal(ref mut internal) => {}
+                Node::Internal(ref mut _internal) => {}
                 Node::Leaf(ref mut leaf) => {
                     match leaf.kv.binary_search_by(|(k, _)| k.cmp(&key)) {
                         Ok(index) => leaf.kv[index] = (key.clone(), value.clone()),
@@ -82,8 +82,8 @@ impl Index {
             let (median_key, mut sibling) = node.split();
             self.buffer_pool.new_page_encode(&mut sibling).await?;
             let sibling_page_id = sibling.page_id();
-            if let Node::Internal(ref mut internal) = sibling{
-                for (_,child) in internal.kv.iter() {
+            if let Node::Internal(ref mut internal) = sibling {
+                for (_, child) in internal.kv.iter() {
                     let mut child_node: Node<K> = self.buffer_pool.fetch_page_node(*child).await?;
                     child_node.set_parent(sibling_page_id);
                     self.buffer_pool.encode_page_node(&child_node).await?;
@@ -144,7 +144,7 @@ impl Index {
         K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord + Default + Clone,
     {
         match node {
-            Node::Internal(ref mut internal) => {}
+            Node::Internal(ref mut _internal) => {}
             Node::Leaf(mut leaf) => {
                 let (key, value) = match leaf.remove(key) {
                     None => return Ok(None),
@@ -346,9 +346,9 @@ impl Index {
                     }
                 }
             }
-            print!("\n");
+            println!();
         }
-        print!("\n");
+        println!();
         Ok(())
     }
 }

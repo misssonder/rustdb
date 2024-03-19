@@ -106,10 +106,7 @@ impl BufferPoolManager {
     }
 
     pub async fn fetch_page_ref(&mut self, page_id: PageId) -> RustDBResult<Option<PageRef>> {
-        Ok(self
-            .fetch_page(page_id)
-            .await?
-            .map(|page| PageRef::new(page)))
+        Ok(self.fetch_page(page_id).await?.map(PageRef::new))
     }
 
     pub async fn unpin_page(&mut self, page_id: PageId, is_dirty: bool) -> Option<PageId> {

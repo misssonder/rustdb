@@ -3,7 +3,7 @@ use crate::storage::codec::{Decoder, Encoder};
 use crate::storage::{PageId, RecordId, NULL_PAGE};
 use bytes::{Buf, BufMut};
 use std::cmp::Ordering;
-use std::fmt::{Debug, Display, Formatter};
+use std::fmt::Debug;
 use std::mem;
 
 const INTERNAL_TYPE: u8 = 1;
@@ -490,7 +490,7 @@ impl<K> Leaf<K> {
     where
         K: Ord,
     {
-        match self.kv.binary_search_by(|(k, _)| k.cmp(&key)) {
+        match self.kv.binary_search_by(|(k, _)| k.cmp(key)) {
             Ok(index) => {
                 self.header.size -= 1;
                 Some(self.kv.remove(index))
@@ -504,7 +504,7 @@ impl<K> Leaf<K> {
         K: Clone,
     {
         let spilt_at = self.header.max_size / 2;
-        let mut sibling_kv = self.kv.split_off(spilt_at);
+        let sibling_kv = self.kv.split_off(spilt_at);
         let median_key = sibling_kv[0].0.clone();
         let mut sibling_header = self.header.clone();
         self.header.size = self.kv.len();
