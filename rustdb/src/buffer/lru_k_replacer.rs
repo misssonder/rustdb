@@ -47,6 +47,8 @@ pub struct LruKReplacer {
     replacer_size: usize,
     k: usize,
 }
+unsafe impl Send for LruKReplacer {}
+unsafe impl Sync for LruKReplacer {}
 
 impl LruKReplacer {
     pub fn new(cap: usize, k: usize) -> Self {

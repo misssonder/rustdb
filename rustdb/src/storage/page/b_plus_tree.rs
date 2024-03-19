@@ -1,12 +1,13 @@
 use crate::error::RustDBError;
 use crate::storage::codec::{Decoder, Encoder};
-use crate::storage::{PageId, RecordId};
+use crate::storage::{PageId, RecordId, NULL_PAGE};
 use bytes::{Buf, BufMut};
 use std::cmp::Ordering;
+use std::fmt::Debug;
 use std::mem;
 
-const INTERNAL_TYPE: u8 = 0;
-const LEAF_TYPE: u8 = 1;
+const INTERNAL_TYPE: u8 = 1;
+const LEAF_TYPE: u8 = 2;
 
 #[derive(Debug, PartialEq)]
 pub enum Node<K> {
@@ -56,51 +57,79 @@ where
 }
 
 impl<K> Node<K> {
-    pub fn is_full(&self) -> bool {
+    pub fn is_overflow(&self) -> bool {
         match self {
-            Node::Internal(internal) => internal.header.size == internal.header.max_size,
-            Node::Leaf(leaf) => leaf.is_full(),
+            Node::Internal(internal) => internal.is_overflow(),
+            Node::Leaf(leaf) => leaf.is_overflow(),
+        }
+    }
+    pub fn is_underflow(&self) -> bool {
+        match self {
+            Node::Internal(internal) => internal.is_underflow(),
+            Node::Leaf(leaf) => leaf.is_underflow(),
         }
     }
 
-    pub fn parent_id(&self) -> PageId {
+    pub fn parent(&self) -> Option<PageId> {
         match self {
-            Node::Internal(node) => node.header.parent,
-            Node::Leaf(node) => node.header.parent,
+            Node::Internal(node) => node.parent(),
+            Node::Leaf(node) => node.parent(),
+        }
+    }
+    pub fn set_parent(&mut self, page_id: PageId) {
+        match self {
+            Node::Internal(node) => node.set_parent(page_id),
+            Node::Leaf(node) => node.set_parent(page_id),
         }
     }
 
     pub fn page_id(&self) -> PageId {
         match self {
-            Node::Internal(node) => node.header.page_id,
-            Node::Leaf(node) => node.header.page_id,
+            Node::Internal(node) => node.page_id(),
+            Node::Leaf(node) => node.page_id(),
+        }
+    }
+
+    pub fn set_next(&mut self, page_id: PageId) {
+        match self {
+            Node::Internal(node) => node.set_next(page_id),
+            Node::Leaf(node) => node.set_next(page_id),
+        }
+    }
+
+    pub fn set_prev(&mut self, page_id: PageId) {
+        match self {
+            Node::Internal(node) => node.set_prev(page_id),
+            Node::Leaf(node) => node.set_prev(page_id),
         }
     }
 
     pub fn set_page_id(&mut self, page_id: PageId) {
         match self {
-            Node::Internal(internal) => internal.header.page_id = page_id,
-            Node::Leaf(leaf) => leaf.header.page_id = page_id,
+            Node::Internal(internal) => internal.set_page_id(page_id),
+            Node::Leaf(leaf) => leaf.set_page_id(page_id),
         }
     }
     pub fn max_size(&mut self) -> usize {
         match self {
-            Node::Internal(internal) => internal.header.max_size,
-            Node::Leaf(leaf) => leaf.header.max_size,
+            Node::Internal(internal) => internal.max_size(),
+            Node::Leaf(leaf) => leaf.max_size(),
         }
     }
 
     pub fn split(&mut self) -> (K, Node<K>)
     where
-        K: Default,
+        K: Default + Clone,
     {
         match self {
             Node::Internal(ref mut internal) => {
                 let (median_key, sibling) = internal.split();
+                assert_eq!(sibling.header.size, sibling.kv.len() - 1);
                 (median_key, Node::Internal(sibling))
             }
             Node::Leaf(ref mut leaf) => {
                 let (median_key, sibling) = leaf.split();
+                assert_eq!(sibling.header.size, sibling.kv.len());
                 (median_key, Node::Leaf(sibling))
             }
         }
@@ -108,20 +137,66 @@ impl<K> Node<K> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct InternalHeader {
+pub struct Header {
     pub size: usize,
     pub max_size: usize,
-    pub parent: PageId,
+    pub parent: Option<PageId>,
     pub page_id: PageId,
+    pub next: Option<PageId>,
+    pub prev: Option<PageId>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct LeafHeader {
-    pub size: usize,
-    pub max_size: usize,
-    pub parent: PageId,
-    pub page_id: PageId,
-    next: PageId,
+impl Encoder for Header {
+    type Error = RustDBError;
+
+    fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
+    where
+        B: BufMut,
+    {
+        buf.put_u64(self.size as _);
+        buf.put_u64(self.max_size as _);
+        match self.parent {
+            None => buf.put_u64(NULL_PAGE as _),
+            Some(parent) => buf.put_u64(parent as _),
+        }
+        buf.put_u64(self.page_id as _);
+        match self.next {
+            None => buf.put_u64(NULL_PAGE as _),
+            Some(next) => buf.put_u64(next as _),
+        }
+        match self.prev {
+            None => buf.put_u64(NULL_PAGE as _),
+            Some(prev) => buf.put_u64(prev as _),
+        }
+        Ok(())
+    }
+}
+
+impl Decoder for Header {
+    type Error = RustDBError;
+
+    fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
+    where
+        B: Buf,
+    {
+        Ok(Header {
+            size: buf.get_u64() as _,
+            max_size: buf.get_u64() as _,
+            parent: match buf.get_u64() as PageId {
+                NULL_PAGE => None,
+                other => Some(other),
+            },
+            page_id: buf.get_u64() as _,
+            next: match buf.get_u64() as PageId {
+                NULL_PAGE => None,
+                other => Some(other),
+            },
+            prev: match buf.get_u64() as PageId {
+                NULL_PAGE => None,
+                other => Some(other),
+            },
+        })
+    }
 }
 
 /**
@@ -138,9 +213,9 @@ pub struct LeafHeader {
  * ----------------------------------------------------------------------------------
  */
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Internal<K> {
-    pub header: InternalHeader,
+    pub header: Header,
     pub kv: Vec<(K, PageId)>,
 }
 
@@ -154,14 +229,9 @@ where
     where
         B: Buf,
     {
-        let header = InternalHeader {
-            size: buf.get_u64() as _,
-            max_size: buf.get_u64() as _,
-            parent: buf.get_u64() as _,
-            page_id: buf.get_u64() as _,
-        };
-        let mut kv = Vec::with_capacity(header.size);
-        for _ in 0..header.size {
+        let header = Header::decode(buf)?;
+        let mut kv = Vec::with_capacity(header.size + 1);
+        for _ in 0..header.size + 1 {
             let k = K::decode(buf)?;
             let v = buf.get_u64() as _;
             kv.push((k, v));
@@ -180,10 +250,7 @@ where
     where
         B: BufMut,
     {
-        buf.put_u64(self.header.size as _);
-        buf.put_u64(self.header.max_size as _);
-        buf.put_u64(self.header.parent as _);
-        buf.put_u64(self.header.page_id as _);
+        self.header.encode(buf)?;
         for (k, v) in self.kv.iter() {
             k.encode(buf)?;
             buf.put_u64(*v as _)
@@ -197,7 +264,7 @@ impl<K> Internal<K> {
     where
         K: Ord,
     {
-        let (mut start, mut end) = (1, self.header.size - 1);
+        let (mut start, mut end) = (1, self.header.size);
         while start < end {
             let mid = (start + end) / 2;
             match self.kv[mid].0.cmp(key) {
@@ -210,15 +277,55 @@ impl<K> Internal<K> {
                 }
             }
         }
-        match self.kv[start].0.cmp(key) {
+        match key.cmp(&self.kv[start].0) {
             Ordering::Less => self.kv[start - 1].1,
             _ => self.kv[start].1,
         }
     }
 
-    pub fn is_full(&self) -> bool {
+    pub fn is_overflow(&self) -> bool {
         // the max length of the key is m - 1
-        self.header.size > self.header.max_size
+        self.header.size > self.header.max_size - 1
+    }
+
+    pub fn is_underflow(&self) -> bool {
+        // the max length of the key is m - 1
+        self.parent().is_some() && self.header.size < self.header.max_size / 2
+    }
+
+    pub fn max_size(&self) -> usize {
+        self.header.max_size
+    }
+
+    pub fn page_id(&self) -> PageId {
+        self.header.page_id
+    }
+    pub fn set_page_id(&mut self, page_id: PageId) {
+        self.header.page_id = page_id
+    }
+
+    pub fn set_parent(&mut self, page_id: PageId) {
+        self.header.parent = Some(page_id);
+    }
+
+    pub fn parent(&self) -> Option<PageId> {
+        self.header.parent
+    }
+
+    pub fn set_next(&mut self, page_id: PageId) {
+        self.header.next = Some(page_id);
+    }
+
+    pub fn next(&self) -> Option<PageId> {
+        self.header.next
+    }
+
+    pub fn set_prev(&mut self, page_id: PageId) {
+        self.header.prev = Some(page_id);
+    }
+
+    pub fn prev(&self) -> Option<PageId> {
+        self.header.prev
     }
 
     pub fn split(&mut self) -> (K, Internal<K>)
@@ -228,18 +335,38 @@ impl<K> Internal<K> {
         // index 0 is ignored, so we split kv from max_size/2 +1
         let spilt_at = self.header.max_size / 2 + 1;
 
-        let mut right_node = self.kv.split_off(spilt_at);
-        let median_key = mem::take(&mut right_node[0].0);
-        let mut right_node_header = self.header.clone();
-        right_node_header.size = right_node.len() - 1;
+        let mut sibling_kv = self.kv.split_off(spilt_at);
+        let median_key = mem::take(&mut sibling_kv[0].0);
+        let mut sibling_header = self.header.clone();
         self.header.size = self.kv.len() - 1;
+        sibling_header.size = sibling_kv.len() - 1;
         (
             median_key,
             Internal {
-                header: right_node_header,
-                kv: right_node,
+                header: sibling_header,
+                kv: sibling_kv,
             },
         )
+    }
+
+    pub fn steal_first(&mut self) -> Option<(K, PageId)> {
+        if self.allow_steal() {
+            self.header.size -= 1;
+            return Some(self.kv.remove(0));
+        }
+        None
+    }
+
+    pub fn steal_last(&mut self) -> Option<(K, PageId)> {
+        if self.allow_steal() {
+            self.header.size -= 1;
+            return self.kv.pop();
+        }
+        None
+    }
+
+    fn allow_steal(&self) -> bool {
+        self.header.size > self.header.max_size / 2
     }
 }
 
@@ -259,9 +386,9 @@ impl<K> Internal<K> {
  * -----------------------------------------------------------------------
  */
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Leaf<K> {
-    pub header: LeafHeader,
+    pub header: Header,
     pub kv: Vec<(K, RecordId)>,
 }
 
@@ -275,13 +402,7 @@ where
     where
         B: Buf,
     {
-        let header = LeafHeader {
-            size: buf.get_u64() as _,
-            max_size: buf.get_u64() as _,
-            parent: buf.get_u64() as _,
-            page_id: buf.get_u64() as _,
-            next: buf.get_u64() as _,
-        };
+        let header = Header::decode(buf)?;
         let mut kv = Vec::with_capacity(header.size);
         for _ in 0..header.size {
             let k = K::decode(buf)?;
@@ -302,11 +423,7 @@ where
     where
         B: BufMut,
     {
-        buf.put_u64(self.header.size as _);
-        buf.put_u64(self.header.max_size as _);
-        buf.put_u64(self.header.parent as _);
-        buf.put_u64(self.header.page_id as _);
-        buf.put_u64(self.header.next as _);
+        self.header.encode(buf)?;
         for (k, v) in self.kv.iter() {
             k.encode(buf)?;
             v.encode(buf)?;
@@ -326,30 +443,99 @@ impl<K> Leaf<K> {
         }
     }
 
-    pub fn is_full(&self) -> bool {
-        self.header.size >= self.header.max_size
+    pub fn is_overflow(&self) -> bool {
+        self.header.size > self.header.max_size - 1
     }
+
+    pub fn is_underflow(&self) -> bool {
+        self.parent().is_some() && self.header.size < self.header.max_size / 2
+    }
+
+    pub fn max_size(&self) -> usize {
+        self.header.max_size
+    }
+
+    pub fn page_id(&self) -> PageId {
+        self.header.page_id
+    }
+    pub fn set_page_id(&mut self, page_id: PageId) {
+        self.header.page_id = page_id
+    }
+
+    pub fn set_parent(&mut self, page_id: PageId) {
+        self.header.parent = Some(page_id);
+    }
+
+    pub fn parent(&self) -> Option<PageId> {
+        self.header.parent
+    }
+
     pub fn set_next(&mut self, page_id: PageId) {
-        self.header.next = page_id;
+        self.header.next = Some(page_id);
+    }
+
+    pub fn next(&self) -> Option<PageId> {
+        self.header.next
+    }
+
+    pub fn set_prev(&mut self, page_id: PageId) {
+        self.header.prev = Some(page_id);
+    }
+
+    pub fn prev(&self) -> Option<PageId> {
+        self.header.prev
+    }
+
+    pub fn remove(&mut self, key: &K) -> Option<(K, RecordId)>
+    where
+        K: Ord,
+    {
+        match self.kv.binary_search_by(|(k, _)| k.cmp(key)) {
+            Ok(index) => {
+                self.header.size -= 1;
+                Some(self.kv.remove(index))
+            }
+            Err(_) => None,
+        }
     }
 
     pub fn split(&mut self) -> (K, Leaf<K>)
     where
-        K: Default,
+        K: Clone,
     {
         let spilt_at = self.header.max_size / 2;
-        let mut right_node = self.kv.split_off(spilt_at);
-        let median_key = mem::take(&mut right_node[0].0);
-        let mut right_node_header = self.header.clone();
-        right_node_header.size = right_node.len();
+        let sibling_kv = self.kv.split_off(spilt_at);
+        let median_key = sibling_kv[0].0.clone();
+        let mut sibling_header = self.header.clone();
         self.header.size = self.kv.len();
+        sibling_header.size = sibling_kv.len();
         (
             median_key,
             Leaf {
-                header: right_node_header,
-                kv: right_node,
+                header: sibling_header,
+                kv: sibling_kv,
             },
         )
+    }
+
+    pub fn steal_first(&mut self) -> Option<(K, RecordId)> {
+        if self.allow_steal() {
+            self.header.size -= 1;
+            return Some(self.kv.remove(0));
+        }
+        None
+    }
+
+    pub fn steal_last(&mut self) -> Option<(K, RecordId)> {
+        if self.allow_steal() {
+            self.header.size -= 1;
+            return self.kv.pop();
+        }
+        None
+    }
+
+    fn allow_steal(&self) -> bool {
+        self.header.size > self.header.max_size / 2
     }
 }
 
@@ -390,6 +576,25 @@ mod tests {
     }
 
     #[test]
+    fn test_header_decode_encode() -> RustDBResult<()> {
+        let header = Header {
+            size: 1,
+            max_size: 2,
+            parent: None,
+            page_id: 4,
+            next: Some(5),
+            prev: Some(6),
+        };
+        let mut buffer = [0; PAGE_SIZE];
+        header.encode(&mut buffer.as_mut())?;
+        let new_header1 = Header::decode(&mut buffer.as_ref())?;
+        let new_header2 = Header::decode(&mut buffer.as_ref())?;
+        assert_eq!(header, new_header1);
+        assert_eq!(header, new_header2);
+        Ok(())
+    }
+
+    #[test]
     fn test_internal_decode_encode() -> RustDBResult<()> {
         let len = 100;
         let mut kv = Vec::with_capacity(len);
@@ -397,11 +602,13 @@ mod tests {
             kv.push((Key { data: i as u32 }, i))
         }
         let tree = Node::Internal(Internal {
-            header: InternalHeader {
-                size: len,
+            header: Header {
+                size: len - 1,
                 max_size: len,
-                parent: 1,
+                parent: Some(1),
                 page_id: 2,
+                next: Some(5),
+                prev: Some(6),
             },
             kv,
         });
@@ -430,12 +637,13 @@ mod tests {
             ))
         }
         let tree = Node::Leaf(Leaf {
-            header: LeafHeader {
+            header: Header {
                 size: len,
                 max_size: len,
-                parent: 1,
+                parent: Some(2),
                 page_id: 3,
-                next: 2,
+                next: Some(9),
+                prev: Some(8),
             },
             kv,
         });
