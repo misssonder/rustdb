@@ -82,6 +82,13 @@ impl Index {
             let (median_key, mut sibling) = node.split();
             self.buffer_pool.new_page_encode(&mut sibling).await?;
             let sibling_page_id = sibling.page_id();
+            if let Node::Internal(ref mut internal) = sibling{
+                for (_,child) in internal.kv.iter() {
+                    let mut child_node: Node<K> = self.buffer_pool.fetch_page_node(*child).await?;
+                    child_node.set_parent(sibling_page_id);
+                    self.buffer_pool.encode_page_node(&child_node).await?;
+                }
+            }
             node.set_next(sibling.page_id());
             sibling.set_prev(node.page_id());
             let parent_node = if let Some(parent_id) = node.parent() {
@@ -362,7 +369,7 @@ mod tests {
             init: false,
             max_size: 4,
         };
-        for i in 1..20 {
+        for i in 1..100 {
             index
                 .insert(
                     i as u32,
@@ -378,7 +385,7 @@ mod tests {
         for i in 1..100 {
             let val = index.search(&i).await?;
             assert!(val.is_some());
-            // assert_eq!(i, val.unwrap().page_id as u32);
+            assert_eq!(i, val.unwrap().page_id as u32);
         }
         assert!(index.search(&101).await?.is_none());
         tokio::fs::remove_file(db_name).await?;
