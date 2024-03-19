@@ -226,7 +226,7 @@ impl BufferPoolManager {
             .write_back(node)
     }
 
-    pub async fn new_page_encode<K>(&mut self, node: &mut Node<K>) -> RustDBResult<PageId>
+    pub async fn new_page_encode<K>(&mut self, node: &mut Node<K>) -> RustDBResult<()>
     where
         K: Encoder<Error = RustDBError>,
     {
@@ -237,7 +237,7 @@ impl BufferPoolManager {
         let page_id = page.read().await.page_id();
         node.set_page_id(page_id);
         node.encode(&mut page.write().await.mut_data())?;
-        Ok(page_id)
+        Ok(())
     }
 }
 

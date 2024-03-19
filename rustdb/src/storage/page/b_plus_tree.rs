@@ -3,10 +3,11 @@ use crate::storage::codec::{Decoder, Encoder};
 use crate::storage::{PageId, RecordId, NULL_PAGE};
 use bytes::{Buf, BufMut};
 use std::cmp::Ordering;
+use std::fmt::{Debug, Display, Formatter};
 use std::mem;
 
-const INTERNAL_TYPE: u8 = 0;
-const LEAF_TYPE: u8 = 1;
+const INTERNAL_TYPE: u8 = 1;
+const LEAF_TYPE: u8 = 2;
 
 #[derive(Debug, PartialEq)]
 pub enum Node<K> {
@@ -118,15 +119,17 @@ impl<K> Node<K> {
 
     pub fn split(&mut self) -> (K, Node<K>)
     where
-        K: Default,
+        K: Default + Clone,
     {
         match self {
             Node::Internal(ref mut internal) => {
                 let (median_key, sibling) = internal.split();
+                assert_eq!(sibling.header.size, sibling.kv.len() - 1);
                 (median_key, Node::Internal(sibling))
             }
             Node::Leaf(ref mut leaf) => {
                 let (median_key, sibling) = leaf.split();
+                assert_eq!(sibling.header.size, sibling.kv.len());
                 (median_key, Node::Leaf(sibling))
             }
         }
@@ -227,8 +230,8 @@ where
         B: Buf,
     {
         let header = Header::decode(buf)?;
-        let mut kv = Vec::with_capacity(header.size);
-        for _ in 0..header.size {
+        let mut kv = Vec::with_capacity(header.size + 1);
+        for _ in 0..header.size + 1 {
             let k = K::decode(buf)?;
             let v = buf.get_u64() as _;
             kv.push((k, v));
@@ -261,7 +264,7 @@ impl<K> Internal<K> {
     where
         K: Ord,
     {
-        let (mut start, mut end) = (1, self.header.size - 1);
+        let (mut start, mut end) = (1, self.header.size);
         while start < end {
             let mid = (start + end) / 2;
             match self.kv[mid].0.cmp(key) {
@@ -274,7 +277,7 @@ impl<K> Internal<K> {
                 }
             }
         }
-        match self.kv[start].0.cmp(key) {
+        match key.cmp(&self.kv[start].0) {
             Ordering::Less => self.kv[start - 1].1,
             _ => self.kv[start].1,
         }
@@ -498,11 +501,11 @@ impl<K> Leaf<K> {
 
     pub fn split(&mut self) -> (K, Leaf<K>)
     where
-        K: Default,
+        K: Clone,
     {
         let spilt_at = self.header.max_size / 2;
         let mut sibling_kv = self.kv.split_off(spilt_at);
-        let median_key = mem::take(&mut sibling_kv[0].0);
+        let median_key = sibling_kv[0].0.clone();
         let mut sibling_header = self.header.clone();
         self.header.size = self.kv.len();
         sibling_header.size = sibling_kv.len();
@@ -600,7 +603,7 @@ mod tests {
         }
         let tree = Node::Internal(Internal {
             header: Header {
-                size: len,
+                size: len - 1,
                 max_size: len,
                 parent: Some(1),
                 page_id: 2,
