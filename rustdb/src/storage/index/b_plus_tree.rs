@@ -68,10 +68,7 @@ impl Index {
                 Node::Leaf(ref mut leaf) => {
                     match leaf.kv.binary_search_by(|(k, _)| k.cmp(&key)) {
                         Ok(index) => leaf.kv[index] = (key.clone(), value.clone()),
-                        Err(index) => {
-                            leaf.kv.insert(index, (key.clone(), value.clone()));
-                            leaf.header.size += 1;
-                        }
+                        Err(index) => leaf.insert(index, key.clone(), value.clone()),
                     };
                     self.buffer_pool.encode_page_node(&node).await?;
                 }
@@ -99,10 +96,7 @@ impl Index {
                             .kv
                             .binary_search_by(|(k, _)| k.cmp(&median_key))
                             .unwrap_or_else(|index| index);
-                        internal
-                            .kv
-                            .insert(index, (median_key.clone(), sibling_page_id));
-                        internal.header.size += 1;
+                        internal.insert(index, median_key.clone(), sibling_page_id);
                         self.buffer_pool.encode_page_node(&parent_node).await?;
                     }
                     Node::Leaf(_) => unreachable!(),

@@ -349,6 +349,11 @@ impl<K> Internal<K> {
         )
     }
 
+    pub fn insert(&mut self, index: usize, k: K, page_id: PageId) {
+        self.kv.insert(index, (k, page_id));
+        self.header.size += 1;
+    }
+
     pub fn steal_first(&mut self) -> Option<(K, PageId)> {
         if self.allow_steal() {
             self.header.size -= 1;
@@ -529,6 +534,11 @@ impl<K> Leaf<K> {
                 kv: sibling_kv,
             },
         )
+    }
+
+    pub fn insert(&mut self, index: usize, k: K, record_id: RecordId) {
+        self.kv.insert(index, (k, record_id));
+        self.header.size += 1;
     }
 
     pub fn steal_first(&mut self) -> Option<(K, RecordId)> {
