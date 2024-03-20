@@ -260,7 +260,7 @@ where
 }
 
 impl<K> Internal<K> {
-    pub fn search(&self, key: &K) -> PageId
+    pub fn search(&self, key: &K) -> (usize, PageId)
     where
         K: Ord,
     {
@@ -271,15 +271,15 @@ impl<K> Internal<K> {
                 Ordering::Less => {
                     start = mid + 1;
                 }
-                Ordering::Equal => return self.kv[mid].1,
+                Ordering::Equal => return (mid, self.kv[mid].1),
                 Ordering::Greater => {
                     end = mid - 1;
                 }
             }
         }
         match key.cmp(&self.kv[start].0) {
-            Ordering::Less => self.kv[start - 1].1,
-            _ => self.kv[start].1,
+            Ordering::Less => (start - 1, self.kv[start - 1].1),
+            _ => (start, self.kv[start].1),
         }
     }
 
@@ -357,12 +357,25 @@ impl<K> Internal<K> {
         None
     }
 
+    pub fn push_front(&mut self, key: K, val: PageId) {
+        assert!(self.kv.len() > 1);
+        self.kv.insert(0, (key, val));
+        self.kv.swap(0, 1);
+        self.header.size += 1;
+    }
+
     pub fn steal_last(&mut self) -> Option<(K, PageId)> {
         if self.allow_steal() {
             self.header.size -= 1;
             return self.kv.pop();
         }
         None
+    }
+
+    pub fn push_back(&mut self, key: K, val: PageId) {
+        assert!(self.kv.len() > 1);
+        self.kv.push((key, val));
+        self.header.size += 1;
     }
 
     fn allow_steal(&self) -> bool {
@@ -521,9 +534,15 @@ impl<K> Leaf<K> {
     pub fn steal_first(&mut self) -> Option<(K, RecordId)> {
         if self.allow_steal() {
             self.header.size -= 1;
+            self.kv.swap(0, 1);
             return Some(self.kv.remove(0));
         }
         None
+    }
+
+    pub fn push_front(&mut self, key: K, val: RecordId) {
+        self.kv.insert(0, (key, val));
+        self.header.size += 1;
     }
 
     pub fn steal_last(&mut self) -> Option<(K, RecordId)> {
@@ -532,6 +551,11 @@ impl<K> Leaf<K> {
             return self.kv.pop();
         }
         None
+    }
+
+    pub fn push_back(&mut self, key: K, val: RecordId) {
+        self.kv.push((key, val));
+        self.header.size += 1;
     }
 
     fn allow_steal(&self) -> bool {
