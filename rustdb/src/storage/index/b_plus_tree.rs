@@ -236,8 +236,8 @@ impl Index {
                         // change child parent pointer
                         let mut child: Node<K> = self.buffer_pool.fetch_page_node(steal.1).await?;
                         child.set_parent(internal.page_id());
-                        internal.kv.push(steal);
-                        internal.header.size += 1;
+                        let (key, value) = steal;
+                        internal.push_back(key, value);
                         self.buffer_pool.encode_page_node(&child).await?;
                         self.buffer_pool
                             .encode_page_node(&Node::Internal(next_page))
