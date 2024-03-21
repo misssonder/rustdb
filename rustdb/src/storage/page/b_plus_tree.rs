@@ -410,7 +410,7 @@ impl<K> Internal<K> {
         self.header.size += 1;
     }
 
-    pub fn merge(&mut self, key: K, mut sibling: Internal<K>) {
+    pub fn merge(&mut self, key: K, sibling: &mut Internal<K>) {
         sibling.kv[0].0 = key;
         self.kv.append(&mut sibling.kv);
         self.header.size += sibling.header.size + 1;
@@ -589,7 +589,7 @@ impl<K> Leaf<K> {
         self.header.size += 1;
     }
 
-    pub fn merge(&mut self, mut sibling: Leaf<K>) {
+    pub fn merge(&mut self, sibling: &mut Leaf<K>) {
         self.kv.append(&mut sibling.kv);
         self.header.size += sibling.header.size;
         self.header.next = sibling.header.next;

@@ -16,7 +16,7 @@ pub struct Index {
 impl Index {
     pub async fn search<K>(&mut self, key: &K) -> RustDBResult<Option<RecordId>>
     where
-        K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord + Debug,
+        K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord,
     {
         if self.init {
             if let Node::Leaf(ref leaf) = self.find_leaf(key).await? {
@@ -28,24 +28,25 @@ impl Index {
 
     pub async fn insert<K>(&mut self, key: K, value: RecordId) -> RustDBResult<()>
     where
-        K: Decoder<Error = RustDBError>
-            + Encoder<Error = RustDBError>
-            + Ord
-            + Default
-            + Clone
-            + Debug,
+        K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord + Default + Clone,
     {
         if !self.init {
             self.init_tree(key, value).await?;
             return Ok(());
         }
         let node = self.find_leaf(&key).await?;
-        self.insert_inner(node, key, value).await?;
-        Ok(())
+        self.insert_inner(node, key, value).await
     }
 
-    pub async fn delete<K>(&mut self, key: &K) -> RustDBResult<Option<(K, RecordId)>> {
-        todo!()
+    pub async fn delete<K>(&mut self, key: &K) -> RustDBResult<Option<(K, RecordId)>>
+    where
+        K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord + Clone + Default,
+    {
+        if !self.init {
+            return Ok(None);
+        }
+        let node = self.find_leaf(key).await?;
+        self.delete_inner(node, key).await
     }
 
     pub async fn insert_inner<K>(
@@ -55,12 +56,7 @@ impl Index {
         value: RecordId,
     ) -> RustDBResult<()>
     where
-        K: Decoder<Error = RustDBError>
-            + Encoder<Error = RustDBError>
-            + Ord
-            + Default
-            + Clone
-            + Debug,
+        K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord + Default + Clone,
     {
         loop {
             match node {
@@ -150,6 +146,8 @@ impl Index {
             if self.steal(&mut node).await?.is_some() {
                 break;
             }
+            let parent_node = self.merge(node).await?;
+            node = Node::Internal(parent_node);
         }
         Ok(res)
     }
@@ -290,7 +288,7 @@ impl Index {
 
     async fn find_leaf<K>(&mut self, key: &K) -> RustDBResult<Node<K>>
     where
-        K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord + Debug,
+        K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord,
     {
         let mut page_id = self.root;
         let mut route = Vec::new();
@@ -310,20 +308,88 @@ impl Index {
 
     /// merge this node and it's prev node or next node
     /// return it's parent node
-    pub async fn merge<K>(&mut self, node: &mut Node<K>) -> RustDBResult<Node<K>>
+    pub async fn merge<K>(&mut self, node: Node<K>) -> RustDBResult<Internal<K>>
     where
-        K: Encoder<Error = RustDBError> + Decoder<Error = RustDBError>,
+        K: Encoder<Error = RustDBError> + Decoder<Error = RustDBError> + Clone + Ord,
     {
         match node {
-            Node::Internal(internal) => {}
-            Node::Leaf(leaf) => {
-                if let Some(prev_page_id) = leaf.prev() {
-                    let prev_page: Node<K> = self.buffer_pool.fetch_page_node(prev_page_id).await?;
-                    let prev_page = prev_page.assume_leaf();
+            Node::Internal(internal) => {
+                let (mut left_node, mut right_node) = {
+                    if let Some(prev_page_id) = internal.prev() {
+                        let prev_node: Node<K> =
+                            self.buffer_pool.fetch_page_node(prev_page_id).await?;
+                        let prev_node = prev_node.assume_internal();
+                        (prev_node, internal)
+                    } else if let Some(next_page_id) = internal.next() {
+                        let next_node: Node<K> =
+                            self.buffer_pool.fetch_page_node(next_page_id).await?;
+                        let next_node = next_node.assume_internal();
+                        (internal, next_node)
+                    } else {
+                        unreachable!()
+                    }
+                };
+                let parent_id = left_node.parent().unwrap();
+                let parent_node: Node<K> = self.buffer_pool.fetch_page_node(parent_id).await?;
+                let mut parent_node = parent_node.assume_internal();
+                let (index, _) = parent_node.search(&right_node.kv[0].0);
+                let changed_children = right_node.kv.iter().map(|(_, p)| *p).collect::<Vec<_>>();
+                let (key, _) = parent_node.kv.remove(index);
+                parent_node.header.size -= 1;
+                left_node.merge(key, &mut right_node);
+                // change the children's parent id
+                for child_id in changed_children {
+                    let mut child: Node<K> = self.buffer_pool.fetch_page_node(child_id).await?;
+                    child.set_parent(left_node.page_id());
+                    self.buffer_pool.encode_page_node(&child).await?;
                 }
+                self.buffer_pool
+                    .encode_page_node(&Node::Internal(left_node))
+                    .await?;
+                self.buffer_pool
+                    .encode_page_node(&Node::Internal(right_node))
+                    .await?;
+                self.buffer_pool
+                    .encode_page_node(&Node::Internal(parent_node.clone()))
+                    .await?;
+                Ok(parent_node)
+            }
+            Node::Leaf(leaf) => {
+                let (mut left_node, mut right_node) = {
+                    if let Some(prev_page_id) = leaf.prev() {
+                        let prev_node: Node<K> =
+                            self.buffer_pool.fetch_page_node(prev_page_id).await?;
+                        let prev_node = prev_node.assume_leaf();
+                        (prev_node, leaf)
+                    } else if let Some(next_page_id) = leaf.next() {
+                        let next_node: Node<K> =
+                            self.buffer_pool.fetch_page_node(next_page_id).await?;
+                        let next_node = next_node.assume_leaf();
+                        (leaf, next_node)
+                    } else {
+                        unreachable!()
+                    }
+                };
+                let parent_id = left_node.parent().unwrap();
+                let parent_node: Node<K> = self.buffer_pool.fetch_page_node(parent_id).await?;
+                let mut parent_node = parent_node.assume_internal();
+                let (index, _) = parent_node.search(&right_node.kv[0].0);
+                left_node.merge(&mut right_node);
+                parent_node.kv.remove(index);
+                parent_node.header.size -= 1;
+
+                self.buffer_pool
+                    .encode_page_node(&Node::Leaf(left_node))
+                    .await?;
+                self.buffer_pool
+                    .encode_page_node(&Node::Leaf(right_node))
+                    .await?;
+                self.buffer_pool
+                    .encode_page_node(&Node::Internal(parent_node.clone()))
+                    .await?;
+                Ok(parent_node)
             }
         }
-        todo!()
     }
 
     fn is_root<K>(&self, node: &Node<K>) -> bool {
