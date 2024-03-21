@@ -117,6 +117,46 @@ impl<K> Node<K> {
         }
     }
 
+    pub fn assume_internal_ref(&self) -> &Internal<K> {
+        match self {
+            Node::Internal(internal) => internal,
+            Node::Leaf(_) => unreachable!(),
+        }
+    }
+
+    pub fn assume_leaf_ref(&self) -> &Leaf<K> {
+        match self {
+            Node::Internal(_) => unreachable!(),
+            Node::Leaf(leaf) => leaf,
+        }
+    }
+    pub fn assume_internal_mut(&mut self) -> &mut Internal<K> {
+        match self {
+            Node::Internal(internal) => internal,
+            Node::Leaf(_) => unreachable!(),
+        }
+    }
+
+    pub fn assume_leaf_mut(&mut self) -> &mut Leaf<K> {
+        match self {
+            Node::Internal(_) => unreachable!(),
+            Node::Leaf(leaf) => leaf,
+        }
+    }
+    pub fn assume_internal(self) -> Internal<K> {
+        match self {
+            Node::Internal(internal) => internal,
+            Node::Leaf(_) => unreachable!(),
+        }
+    }
+
+    pub fn assume_leaf(self) -> Leaf<K> {
+        match self {
+            Node::Internal(_) => unreachable!(),
+            Node::Leaf(leaf) => leaf,
+        }
+    }
+
     pub fn split(&mut self) -> (K, Node<K>)
     where
         K: Default + Clone,
@@ -357,6 +397,7 @@ impl<K> Internal<K> {
     pub fn steal_first(&mut self) -> Option<(K, PageId)> {
         if self.allow_steal() {
             self.header.size -= 1;
+            self.kv.swap(0, 1);
             return Some(self.kv.remove(0));
         }
         None
@@ -367,6 +408,13 @@ impl<K> Internal<K> {
         self.kv.insert(0, (key, val));
         self.kv.swap(0, 1);
         self.header.size += 1;
+    }
+
+    pub fn merge(&mut self, key: K, mut sibling: Internal<K>) {
+        sibling.kv[0].0 = key;
+        self.kv.append(&mut sibling.kv);
+        self.header.size += sibling.header.size + 1;
+        self.header.next = sibling.header.next;
     }
 
     pub fn steal_last(&mut self) -> Option<(K, PageId)> {
@@ -541,10 +589,15 @@ impl<K> Leaf<K> {
         self.header.size += 1;
     }
 
+    pub fn merge(&mut self, mut sibling: Leaf<K>) {
+        self.kv.append(&mut sibling.kv);
+        self.header.size += sibling.header.size;
+        self.header.next = sibling.header.next;
+    }
+
     pub fn steal_first(&mut self) -> Option<(K, RecordId)> {
         if self.allow_steal() {
             self.header.size -= 1;
-            self.kv.swap(0, 1);
             return Some(self.kv.remove(0));
         }
         None
