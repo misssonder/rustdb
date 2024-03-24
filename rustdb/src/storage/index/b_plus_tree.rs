@@ -138,16 +138,20 @@ impl Index {
                         None => return Ok(None),
                         other => other,
                     };
-                    if !leaf.is_underflow() {
-                        break;
-                    }
                 }
+            }
+            if !node.is_underflow() {
+                self.buffer_pool.encode_page_node(&node).await?;
+                break;
             }
             if self.steal(&mut node).await?.is_some() {
                 break;
             }
-            let parent_node = self.merge(node).await?;
-            node = Node::Internal(parent_node);
+            if let Some(parent_node) = self.merge(node).await? {
+                node = Node::Internal(parent_node);
+            } else {
+                break;
+            }
         }
         Ok(res)
     }
@@ -183,7 +187,7 @@ impl Index {
                 let mut parent: Node<K> = self.buffer_pool.fetch_page_node(parent_id).await?;
                 let parent = parent.assume_internal_mut();
                 // steal from prev node and change parent
-                let search_index = parent.search(&internal.kv[0].0).0;
+                let search_index = parent.search(&internal.kv[1].0).0;
                 internal.push_front(parent.kv[search_index].0.clone(), steal.1);
                 parent.kv[search_index].0 = steal.0.clone();
                 // change child parent pointer
@@ -216,14 +220,15 @@ impl Index {
                 // change child parent pointer
                 let mut child: Node<K> = self.buffer_pool.fetch_page_node(steal.1).await?;
                 child.set_parent(internal.page_id());
-                let (key, value) = steal;
-                internal.push_back(key, value);
                 self.buffer_pool.encode_page_node(&child).await?;
                 self.buffer_pool
                     .encode_page_node(&Node::Internal(next_page))
                     .await?;
                 self.buffer_pool
                     .encode_page_node(&Node::Internal(internal.clone()))
+                    .await?;
+                self.buffer_pool
+                    .encode_page_node(&Node::Internal(parent.clone()))
                     .await?;
                 return Ok(Some(()));
             }
@@ -308,12 +313,14 @@ impl Index {
 
     /// merge this node and it's prev node or next node
     /// return it's parent node
-    pub async fn merge<K>(&mut self, node: Node<K>) -> RustDBResult<Internal<K>>
+    pub async fn merge<K>(&mut self, node: Node<K>) -> RustDBResult<Option<Internal<K>>>
     where
         K: Encoder<Error = RustDBError> + Decoder<Error = RustDBError> + Clone + Ord,
     {
         match node {
             Node::Internal(internal) => {
+                // todo check internal is empty and steal from parent
+
                 let (mut left_node, mut right_node) = {
                     if let Some(prev_page_id) = internal.prev() {
                         let prev_node: Node<K> =
@@ -332,7 +339,7 @@ impl Index {
                 let parent_id = left_node.parent().unwrap();
                 let parent_node: Node<K> = self.buffer_pool.fetch_page_node(parent_id).await?;
                 let mut parent_node = parent_node.assume_internal();
-                let (index, _) = parent_node.search(&right_node.kv[0].0);
+                let (index, _) = parent_node.search(&right_node.kv[1].0);
                 let changed_children = right_node.kv.iter().map(|(_, p)| *p).collect::<Vec<_>>();
                 let (key, _) = parent_node.kv.remove(index);
                 parent_node.header.size -= 1;
@@ -343,6 +350,18 @@ impl Index {
                     child.set_parent(left_node.page_id());
                     self.buffer_pool.encode_page_node(&child).await?;
                 }
+                if parent_node.parent().is_none() && parent_node.header.size == 0 {
+                    //change root node
+                    self.root = left_node.page_id();
+                    left_node.header.parent = None;
+                    self.buffer_pool
+                        .encode_page_node(&Node::Internal(left_node))
+                        .await?;
+                    self.buffer_pool
+                        .encode_page_node(&Node::Internal(right_node))
+                        .await?;
+                    return Ok(None);
+                }
                 self.buffer_pool
                     .encode_page_node(&Node::Internal(left_node))
                     .await?;
@@ -352,7 +371,7 @@ impl Index {
                 self.buffer_pool
                     .encode_page_node(&Node::Internal(parent_node.clone()))
                     .await?;
-                Ok(parent_node)
+                Ok(Some(parent_node))
             }
             Node::Leaf(leaf) => {
                 let (mut left_node, mut right_node) = {
@@ -378,6 +397,18 @@ impl Index {
                 parent_node.kv.remove(index);
                 parent_node.header.size -= 1;
 
+                if parent_node.parent().is_none() && parent_node.header.size == 0 {
+                    //change root node
+                    self.root = left_node.page_id();
+                    left_node.header.parent = None;
+                    self.buffer_pool
+                        .encode_page_node(&Node::Leaf(left_node))
+                        .await?;
+                    self.buffer_pool
+                        .encode_page_node(&Node::Leaf(right_node))
+                        .await?;
+                    return Ok(None);
+                }
                 self.buffer_pool
                     .encode_page_node(&Node::Leaf(left_node))
                     .await?;
@@ -387,7 +418,8 @@ impl Index {
                 self.buffer_pool
                     .encode_page_node(&Node::Internal(parent_node.clone()))
                     .await?;
-                Ok(parent_node)
+
+                Ok(Some(parent_node))
             }
         }
     }
@@ -503,6 +535,43 @@ mod tests {
             assert_eq!(i, val.unwrap().page_id as u32);
         }
         assert!(index.search(&101).await?.is_none());
+        tokio::fs::remove_file(db_name).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_delete() -> RustDBResult<()> {
+        let db_name = "test_delete.db";
+        let disk_manager = DiskManager::new(db_name).await?;
+        let buffer_pool_manager = BufferPoolManager::new(100, 2, disk_manager).await?;
+        let mut index = Index {
+            buffer_pool: buffer_pool_manager,
+            root: 0,
+            init: false,
+            max_size: 4,
+        };
+        let len = 30;
+        for i in 1..len {
+            index
+                .insert(
+                    i as u32,
+                    RecordId {
+                        page_id: i,
+                        slot_num: 0,
+                    },
+                )
+                .await?;
+        }
+        index.print::<u32>().await?;
+        for i in (1..len).rev() {
+            let val = index.delete(&(i as u32)).await?;
+            assert!(val.is_some());
+            println!("delete: {}", i);
+            index.print::<u32>().await?;
+        }
+
+        let val = index.search(&1).await?;
+        println!("{:?}", val);
         tokio::fs::remove_file(db_name).await?;
         Ok(())
     }
