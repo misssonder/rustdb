@@ -138,151 +138,165 @@ impl Index {
                         None => return Ok(None),
                         other => other,
                     };
-                    if !leaf.is_underflow() {
-                        break;
-                    }
                 }
             }
-            if self.steal(&mut node).await?.is_some() {
+            if !node.is_underflow() {
+                self.buffer_pool.encode_page_node(&node).await?;
                 break;
             }
-            let parent_node = self.merge(node).await?;
-            node = Node::Internal(parent_node);
+            match node.parent() {
+                None => break,
+                Some(parent_id) => {
+                    let mut parent: Internal<K> = self
+                        .buffer_pool
+                        .fetch_page_node(parent_id)
+                        .await?
+                        .assume_internal();
+
+                    let (index, _) = parent.search(key);
+                    if self.steal(&mut parent, &mut node, index).await?.is_some() {
+                        break;
+                    }
+                    if self.merge(&mut parent, node, index).await? {
+                        break;
+                    };
+                    node = Node::Internal(parent)
+                }
+            }
         }
         Ok(res)
     }
 
-    pub async fn steal<K>(&mut self, node: &mut Node<K>) -> RustDBResult<Option<()>>
+    pub async fn steal<K>(
+        &mut self,
+        parent: &mut Internal<K>,
+        node: &mut Node<K>,
+        index: usize,
+    ) -> RustDBResult<Option<()>>
     where
         K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord + Default + Clone,
     {
+        //steal from left
+        let prev = match index > 0 {
+            true => Some(index - 1),
+            false => None,
+        };
+        let next = match index >= parent.kv.len() - 1 {
+            true => None,
+            false => Some(index + 1),
+        };
         match node {
             Node::Internal(internal) => {
-                if self.steal_internal(internal).await?.is_some() {
-                    return Ok(Some(()));
+                if let Some(prev_index) = prev {
+                    let prev_id = parent.kv[prev_index].1;
+                    let mut prev_page: Internal<K> = self
+                        .buffer_pool
+                        .fetch_page_node(prev_id)
+                        .await?
+                        .assume_internal();
+                    if let Some(steal) = prev_page.steal_last() {
+                        // steal from prev node and change parent
+                        let right_index = index;
+                        internal.push_front(parent.kv[right_index].0.clone(), steal.1);
+                        parent.kv[right_index].0 = steal.0;
+                        // change child parent pointer
+                        let mut child: Node<K> = self.buffer_pool.fetch_page_node(steal.1).await?;
+                        child.set_parent(internal.page_id());
+                        self.buffer_pool.encode_page_node(&child).await?;
+                        self.buffer_pool
+                            .encode_page_node(&Node::Internal(prev_page))
+                            .await?;
+                        self.buffer_pool
+                            .encode_page_node(&Node::Internal(internal.clone()))
+                            .await?;
+                        self.buffer_pool
+                            .encode_page_node(&Node::Internal(parent.clone()))
+                            .await?;
+                        return Ok(Some(()));
+                    }
+                }
+                if let Some(next_index) = next {
+                    let next_id = parent.kv[next_index].1;
+                    let mut next_page: Internal<K> = self
+                        .buffer_pool
+                        .fetch_page_node(next_id)
+                        .await?
+                        .assume_internal();
+                    if let Some(steal) = next_page.steal_first() {
+                        // steal from next node and change parent
+                        let right_index = next_index;
+                        internal.push_back(parent.kv[right_index].0.clone(), steal.1);
+                        parent.kv[right_index].0 = steal.0;
+                        // change child parent pointer
+                        let mut child: Node<K> = self.buffer_pool.fetch_page_node(steal.1).await?;
+                        child.set_parent(internal.page_id());
+                        self.buffer_pool.encode_page_node(&child).await?;
+                        self.buffer_pool
+                            .encode_page_node(&Node::Internal(next_page))
+                            .await?;
+                        self.buffer_pool
+                            .encode_page_node(&Node::Internal(internal.clone()))
+                            .await?;
+                        self.buffer_pool
+                            .encode_page_node(&Node::Internal(parent.clone()))
+                            .await?;
+                        return Ok(Some(()));
+                    }
                 }
             }
             Node::Leaf(ref mut leaf) => {
-                if self.steal_leaf(leaf).await?.is_some() {
-                    return Ok(Some(()));
+                if let Some(prev_index) = prev {
+                    let prev_id = parent.kv[prev_index].1;
+                    let mut prev_page: Leaf<K> = self
+                        .buffer_pool
+                        .fetch_page_node(prev_id)
+                        .await?
+                        .assume_leaf();
+                    if let Some(steal) = prev_page.steal_last() {
+                        let right_index = index;
+                        parent.kv[right_index].0 = steal.0.clone();
+                        let (key, value) = steal;
+                        leaf.push_front(key, value);
+                        self.buffer_pool
+                            .encode_page_node(&Node::Leaf(prev_page))
+                            .await?;
+                        self.buffer_pool
+                            .encode_page_node(&Node::Leaf(leaf.clone()))
+                            .await?;
+                        self.buffer_pool
+                            .encode_page_node(&Node::Internal(parent.clone()))
+                            .await?;
+                        return Ok(Some(()));
+                    }
+                }
+                if let Some(next_index) = next {
+                    let next_id = parent.kv[next_index].1;
+                    let mut next_page: Leaf<K> = self
+                        .buffer_pool
+                        .fetch_page_node(next_id)
+                        .await?
+                        .assume_leaf();
+                    if let Some(steal) = next_page.steal_first() {
+                        // steal from next node and change parent
+                        let right_index = next_index;
+                        parent.kv[right_index].0 = next_page.kv[0].0.clone();
+                        let (key, value) = steal;
+                        leaf.push_back(key, value);
+                        self.buffer_pool
+                            .encode_page_node(&Node::Leaf(next_page))
+                            .await?;
+                        self.buffer_pool
+                            .encode_page_node(&Node::Leaf(leaf.clone()))
+                            .await?;
+                        self.buffer_pool
+                            .encode_page_node(&Node::Internal(parent.clone()))
+                            .await?;
+                        return Ok(Some(()));
+                    }
                 }
             }
         }
-        Ok(None)
-    }
-    // todo consider encode without clone
-    async fn steal_internal<K>(&mut self, internal: &mut Internal<K>) -> RustDBResult<Option<()>>
-    where
-        K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord + Default + Clone,
-    {
-        if let Some(prev_page_id) = internal.prev() {
-            let prev_page: Node<K> = self.buffer_pool.fetch_page_node(prev_page_id).await?;
-            let mut prev_page = prev_page.assume_internal();
-            if let Some(steal) = prev_page.steal_last() {
-                let parent_id = internal.parent().unwrap();
-                let mut parent: Node<K> = self.buffer_pool.fetch_page_node(parent_id).await?;
-                let parent = parent.assume_internal_mut();
-                // steal from prev node and change parent
-                let search_index = parent.search(&internal.kv[0].0).0;
-                internal.push_front(parent.kv[search_index].0.clone(), steal.1);
-                parent.kv[search_index].0 = steal.0.clone();
-                // change child parent pointer
-                let mut child: Node<K> = self.buffer_pool.fetch_page_node(steal.1).await?;
-                child.set_parent(internal.page_id());
-                self.buffer_pool.encode_page_node(&child).await?;
-                self.buffer_pool
-                    .encode_page_node(&Node::Internal(prev_page))
-                    .await?;
-                self.buffer_pool
-                    .encode_page_node(&Node::Internal(internal.clone()))
-                    .await?;
-                self.buffer_pool
-                    .encode_page_node(&Node::Internal(parent.clone()))
-                    .await?;
-                return Ok(Some(()));
-            }
-        }
-        if let Some(next_page_id) = internal.next() {
-            let next_page: Node<K> = self.buffer_pool.fetch_page_node(next_page_id).await?;
-            let mut next_page = next_page.assume_internal();
-            if let Some(steal) = next_page.steal_first() {
-                let parent_id = internal.parent().unwrap();
-                let mut parent: Node<K> = self.buffer_pool.fetch_page_node(parent_id).await?;
-                let parent = parent.assume_internal_mut();
-                // steal from next node and change parent
-                let search_index = parent.search(&steal.0).0;
-                internal.push_back(parent.kv[search_index].0.clone(), steal.1);
-                parent.kv[search_index].0 = steal.0.clone();
-                // change child parent pointer
-                let mut child: Node<K> = self.buffer_pool.fetch_page_node(steal.1).await?;
-                child.set_parent(internal.page_id());
-                let (key, value) = steal;
-                internal.push_back(key, value);
-                self.buffer_pool.encode_page_node(&child).await?;
-                self.buffer_pool
-                    .encode_page_node(&Node::Internal(next_page))
-                    .await?;
-                self.buffer_pool
-                    .encode_page_node(&Node::Internal(internal.clone()))
-                    .await?;
-                return Ok(Some(()));
-            }
-        }
-        Ok(None)
-    }
 
-    async fn steal_leaf<K>(&mut self, leaf: &mut Leaf<K>) -> RustDBResult<Option<()>>
-    where
-        K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord + Default + Clone,
-    {
-        if let Some(prev_page_id) = leaf.prev() {
-            let prev_page: Node<K> = self.buffer_pool.fetch_page_node(prev_page_id).await?;
-            let mut prev_page = prev_page.assume_leaf();
-            if let Some(steal) = prev_page.steal_last() {
-                let parent_id = leaf.parent().unwrap();
-                let mut parent: Node<K> = self.buffer_pool.fetch_page_node(parent_id).await?;
-                let parent = parent.assume_internal_mut();
-
-                let search_index = parent.search(&leaf.kv[0].0).0;
-                parent.kv[search_index].0 = steal.0.clone();
-                let (key, value) = steal;
-                leaf.push_front(key, value);
-                self.buffer_pool
-                    .encode_page_node(&Node::Leaf(prev_page))
-                    .await?;
-                self.buffer_pool
-                    .encode_page_node(&Node::Leaf(leaf.clone()))
-                    .await?;
-                self.buffer_pool
-                    .encode_page_node(&Node::Internal(parent.clone()))
-                    .await?;
-                return Ok(Some(()));
-            }
-        }
-        if let Some(next_page_id) = leaf.next() {
-            let next_page: Node<K> = self.buffer_pool.fetch_page_node(next_page_id).await?;
-            let mut next_page = next_page.assume_leaf();
-            if let Some(steal) = next_page.steal_first() {
-                let parent_id = leaf.parent().unwrap();
-                let mut parent: Node<K> = self.buffer_pool.fetch_page_node(parent_id).await?;
-                let parent = parent.assume_internal_mut();
-
-                let search_index = parent.search(&steal.0).0;
-                parent.kv[search_index].0 = next_page.kv[0].0.clone();
-                let (key, value) = steal;
-                leaf.push_back(key, value);
-                self.buffer_pool
-                    .encode_page_node(&Node::Leaf(next_page))
-                    .await?;
-                self.buffer_pool
-                    .encode_page_node(&Node::Leaf(leaf.clone()))
-                    .await?;
-                self.buffer_pool
-                    .encode_page_node(&Node::Internal(parent.clone()))
-                    .await?;
-                return Ok(Some(()));
-            }
-        }
         Ok(None)
     }
 
@@ -308,40 +322,61 @@ impl Index {
 
     /// merge this node and it's prev node or next node
     /// return it's parent node
-    pub async fn merge<K>(&mut self, node: Node<K>) -> RustDBResult<Internal<K>>
+    pub async fn merge<K>(
+        &mut self,
+        parent: &mut Internal<K>,
+        node: Node<K>,
+        index: usize,
+    ) -> RustDBResult<bool>
     where
         K: Encoder<Error = RustDBError> + Decoder<Error = RustDBError> + Clone + Ord,
     {
+        let prev = match index > 0 {
+            true => Some(index - 1),
+            false => None,
+        };
+        let next = match index >= parent.kv.len() - 1 {
+            true => None,
+            false => Some(index + 1),
+        };
         match node {
-            Node::Internal(internal) => {
-                let (mut left_node, mut right_node) = {
-                    if let Some(prev_page_id) = internal.prev() {
-                        let prev_node: Node<K> =
-                            self.buffer_pool.fetch_page_node(prev_page_id).await?;
+            Node::Internal(mut internal) => {
+                let (mut left_node, mut right_node, right_index) = {
+                    if let Some(prev_index) = prev {
+                        let prev_id = parent.kv[prev_index].1;
+                        let prev_node: Node<K> = self.buffer_pool.fetch_page_node(prev_id).await?;
                         let prev_node = prev_node.assume_internal();
-                        (prev_node, internal)
-                    } else if let Some(next_page_id) = internal.next() {
-                        let next_node: Node<K> =
-                            self.buffer_pool.fetch_page_node(next_page_id).await?;
+                        (prev_node, internal, index)
+                    } else if let Some(next_index) = next {
+                        let next_id = parent.kv[next_index].1;
+                        let next_node: Node<K> = self.buffer_pool.fetch_page_node(next_id).await?;
                         let next_node = next_node.assume_internal();
-                        (internal, next_node)
+                        (internal, next_node, next_index)
                     } else {
-                        unreachable!()
+                        return Ok(true);
                     }
                 };
-                let parent_id = left_node.parent().unwrap();
-                let parent_node: Node<K> = self.buffer_pool.fetch_page_node(parent_id).await?;
-                let mut parent_node = parent_node.assume_internal();
-                let (index, _) = parent_node.search(&right_node.kv[0].0);
                 let changed_children = right_node.kv.iter().map(|(_, p)| *p).collect::<Vec<_>>();
-                let (key, _) = parent_node.kv.remove(index);
-                parent_node.header.size -= 1;
+                let (key, _) = parent.kv.remove(right_index);
+                parent.header.size -= 1;
                 left_node.merge(key, &mut right_node);
                 // change the children's parent id
                 for child_id in changed_children {
                     let mut child: Node<K> = self.buffer_pool.fetch_page_node(child_id).await?;
                     child.set_parent(left_node.page_id());
                     self.buffer_pool.encode_page_node(&child).await?;
+                }
+                if parent.header.size == 0 && self.root.eq(&parent.page_id()) {
+                    //change root node
+                    self.root = left_node.page_id();
+                    left_node.header.parent = None;
+                    self.buffer_pool
+                        .encode_page_node(&Node::Internal(left_node))
+                        .await?;
+                    self.buffer_pool
+                        .encode_page_node(&Node::Internal(right_node))
+                        .await?;
+                    return Ok(true);
                 }
                 self.buffer_pool
                     .encode_page_node(&Node::Internal(left_node))
@@ -350,34 +385,42 @@ impl Index {
                     .encode_page_node(&Node::Internal(right_node))
                     .await?;
                 self.buffer_pool
-                    .encode_page_node(&Node::Internal(parent_node.clone()))
+                    .encode_page_node(&Node::Internal(parent.clone()))
                     .await?;
-                Ok(parent_node)
+                Ok(false)
             }
             Node::Leaf(leaf) => {
-                let (mut left_node, mut right_node) = {
-                    if let Some(prev_page_id) = leaf.prev() {
-                        let prev_node: Node<K> =
-                            self.buffer_pool.fetch_page_node(prev_page_id).await?;
+                let (mut left_node, mut right_node, right_index) = {
+                    if let Some(prev_index) = prev {
+                        let prev_id = parent.kv[prev_index].1;
+                        let prev_node: Node<K> = self.buffer_pool.fetch_page_node(prev_id).await?;
                         let prev_node = prev_node.assume_leaf();
-                        (prev_node, leaf)
-                    } else if let Some(next_page_id) = leaf.next() {
-                        let next_node: Node<K> =
-                            self.buffer_pool.fetch_page_node(next_page_id).await?;
+                        (prev_node, leaf, index)
+                    } else if let Some(next_index) = next {
+                        let next_id = parent.kv[next_index].1;
+                        let next_node: Node<K> = self.buffer_pool.fetch_page_node(next_id).await?;
                         let next_node = next_node.assume_leaf();
-                        (leaf, next_node)
+                        (leaf, next_node, next_index)
                     } else {
-                        unreachable!()
+                        return Ok(true);
                     }
                 };
-                let parent_id = left_node.parent().unwrap();
-                let parent_node: Node<K> = self.buffer_pool.fetch_page_node(parent_id).await?;
-                let mut parent_node = parent_node.assume_internal();
-                let (index, _) = parent_node.search(&right_node.kv[0].0);
                 left_node.merge(&mut right_node);
-                parent_node.kv.remove(index);
-                parent_node.header.size -= 1;
+                parent.kv.remove(right_index);
+                parent.header.size -= 1;
 
+                if parent.header.size == 0 && self.root.eq(&parent.page_id()) {
+                    //change root node
+                    self.root = left_node.page_id();
+                    left_node.header.parent = None;
+                    self.buffer_pool
+                        .encode_page_node(&Node::Leaf(left_node))
+                        .await?;
+                    self.buffer_pool
+                        .encode_page_node(&Node::Leaf(right_node))
+                        .await?;
+                    return Ok(true);
+                }
                 self.buffer_pool
                     .encode_page_node(&Node::Leaf(left_node))
                     .await?;
@@ -385,9 +428,10 @@ impl Index {
                     .encode_page_node(&Node::Leaf(right_node))
                     .await?;
                 self.buffer_pool
-                    .encode_page_node(&Node::Internal(parent_node.clone()))
+                    .encode_page_node(&Node::Internal(parent.clone()))
                     .await?;
-                Ok(parent_node)
+
+                Ok(false)
             }
         }
     }
@@ -503,6 +547,43 @@ mod tests {
             assert_eq!(i, val.unwrap().page_id as u32);
         }
         assert!(index.search(&101).await?.is_none());
+        tokio::fs::remove_file(db_name).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_delete() -> RustDBResult<()> {
+        let db_name = "test_delete.db";
+        let disk_manager = DiskManager::new(db_name).await?;
+        let buffer_pool_manager = BufferPoolManager::new(100, 2, disk_manager).await?;
+        let mut index = Index {
+            buffer_pool: buffer_pool_manager,
+            root: 0,
+            init: false,
+            max_size: 4,
+        };
+        let len = 100;
+        for i in 1..len {
+            index
+                .insert(
+                    i as u32,
+                    RecordId {
+                        page_id: i,
+                        slot_num: 0,
+                    },
+                )
+                .await?;
+        }
+        index.print::<u32>().await?;
+        for i in (1..len).rev() {
+            let val = index.delete(&(i as u32)).await?;
+            assert!(val.is_some());
+            println!("delete: {}", i);
+            index.print::<u32>().await?;
+        }
+
+        let val = index.search(&1).await?;
+        println!("{:?}", val);
         tokio::fs::remove_file(db_name).await?;
         Ok(())
     }
