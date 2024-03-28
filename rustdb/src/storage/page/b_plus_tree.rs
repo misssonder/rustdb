@@ -325,12 +325,12 @@ impl<K> Internal<K> {
 
     pub fn is_overflow(&self) -> bool {
         // the max length of the key is m - 1
-        self.header.size > self.header.max_size - 1
+        self.header.size + 1> self.header.max_size
     }
 
     pub fn is_underflow(&self) -> bool {
         // the max length of the key is m - 1
-        self.parent().is_some() && self.header.size < self.header.max_size / 2
+        self.parent().is_some() && self.header.size + 1< self.header.max_size/2
     }
 
     pub fn max_size(&self) -> usize {
@@ -431,7 +431,7 @@ impl<K> Internal<K> {
         self.header.size += 1;
     }
 
-    fn allow_steal(&self) -> bool {
+    pub fn allow_steal(&self) -> bool {
         self.header.size > self.header.max_size / 2
     }
 }
@@ -559,7 +559,8 @@ impl<K> Leaf<K> {
         match self.kv.binary_search_by(|(k, _)| k.cmp(key)) {
             Ok(index) => {
                 self.header.size -= 1;
-                Some(self.kv.remove(index))
+                let val = self.kv.remove(index);
+                Some(val)
             }
             Err(_) => None,
         }
@@ -621,7 +622,7 @@ impl<K> Leaf<K> {
         self.header.size += 1;
     }
 
-    fn allow_steal(&self) -> bool {
+    pub fn allow_steal(&self) -> bool {
         self.header.size > self.header.max_size / 2
     }
 }
