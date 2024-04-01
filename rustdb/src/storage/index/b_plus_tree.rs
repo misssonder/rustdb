@@ -514,22 +514,22 @@ impl Index {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
     use super::*;
     use crate::storage::disk::disk_manager::DiskManager;
+    use std::time::Duration;
 
     #[tokio::test]
     async fn test_insert() -> RustDBResult<()> {
         let db_name = "test_insert.db";
         let disk_manager = DiskManager::new(db_name).await?;
-        let buffer_pool_manager = BufferPoolManager::new(30, 2, disk_manager).await?;
+        let buffer_pool_manager = BufferPoolManager::new(50, 2, disk_manager).await?;
         let mut index = Index {
             buffer_pool: buffer_pool_manager,
             root: 0,
             init: false,
             max_size: 4,
         };
-        for i in 1..100 {
+        for i in (1..100).rev() {
             index
                 .insert(
                     i as u32,
@@ -539,7 +539,7 @@ mod tests {
                     },
                 )
                 .await?;
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            // tokio::time::sleep(Duration::from_millis(100)).await;
             println!("insert: {}", i);
             index.print::<u32>().await?;
         }
@@ -576,11 +576,27 @@ mod tests {
                 )
                 .await?;
         }
-        index.print::<u32>().await?;
         for i in (1..len).rev() {
             let val = index.delete(&(i as u32)).await?;
             assert!(val.is_some());
+        }
+
+        for i in 1..len {
+            index
+                .insert(
+                    i as u32,
+                    RecordId {
+                        page_id: i,
+                        slot_num: 0,
+                    },
+                )
+                .await?;
+        }
+        index.print::<u32>().await?;
+        for i in (1..len) {
+            let val = index.delete(&(i as u32)).await?;
             println!("delete: {}", i);
+            assert!(val.is_some());
             index.print::<u32>().await?;
         }
 

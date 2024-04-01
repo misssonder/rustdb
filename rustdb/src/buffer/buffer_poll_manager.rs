@@ -50,7 +50,7 @@ impl BufferPoolManager {
             let page_id = self.allocate_page();
             let mut page = Page::new(page_id);
             page.pin_count = 1;
-            self.pages[frame_id ]= Arc::new(RwLock::new(page));
+            self.pages[frame_id] = Arc::new(RwLock::new(page));
             self.page_table.insert(page_id, frame_id);
             self.replacer.write().await.record_access(frame_id);
             self.replacer.write().await.set_evictable(frame_id, false);
