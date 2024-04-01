@@ -514,6 +514,7 @@ impl Index {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
     use super::*;
     use crate::storage::disk::disk_manager::DiskManager;
 
@@ -521,7 +522,7 @@ mod tests {
     async fn test_insert() -> RustDBResult<()> {
         let db_name = "test_insert.db";
         let disk_manager = DiskManager::new(db_name).await?;
-        let buffer_pool_manager = BufferPoolManager::new(100, 2, disk_manager).await?;
+        let buffer_pool_manager = BufferPoolManager::new(30, 2, disk_manager).await?;
         let mut index = Index {
             buffer_pool: buffer_pool_manager,
             root: 0,
@@ -538,6 +539,7 @@ mod tests {
                     },
                 )
                 .await?;
+            tokio::time::sleep(Duration::from_millis(100)).await;
             println!("insert: {}", i);
             index.print::<u32>().await?;
         }
