@@ -13,7 +13,7 @@ use tokio::sync::RwLock;
 
 pub struct BufferPoolManager {
     pages: Vec<Arc<RwLock<Page>>>,
-    replacer: LruKReplacer,
+    replacer: RwLock<LruKReplacer>,
     page_table: HashMap<PageId, FrameId>,
     free_list: VecDeque<FrameId>,
     disk_manager: DiskManager,
@@ -23,7 +23,7 @@ pub struct BufferPoolManager {
 
 impl BufferPoolManager {
     pub async fn new(pool_size: usize, k: usize, disk_manager: DiskManager) -> RustDBResult<Self> {
-        let replacer = LruKReplacer::new(pool_size, k);
+        let replacer = RwLock::new(LruKReplacer::new(pool_size, k));
         let mut free_list = VecDeque::with_capacity(pool_size);
         for frame_id in 0..pool_size {
             free_list.push_back(frame_id as FrameId);
@@ -51,8 +51,8 @@ impl BufferPoolManager {
             page.pin_count = 1;
             self.pages.insert(frame_id, Arc::new(RwLock::new(page)));
             self.page_table.insert(page_id, frame_id);
-            self.replacer.record_access(frame_id);
-            self.replacer.set_evictable(frame_id, false);
+            self.replacer.write().await.record_access(frame_id);
+            self.replacer.write().await.set_evictable(frame_id, false);
             return Ok(self.pages.get(frame_id).cloned());
         }
         Ok(None)
@@ -65,8 +65,8 @@ impl BufferPoolManager {
             page.pin_count = 1;
             self.pages.insert(frame_id, Arc::new(RwLock::new(page)));
             self.page_table.insert(page_id, frame_id);
-            self.replacer.record_access(frame_id);
-            self.replacer.set_evictable(frame_id, false);
+            self.replacer.write().await.record_access(frame_id);
+            self.replacer.write().await.set_evictable(frame_id, false);
             return Ok(self
                 .pages
                 .get(frame_id)
@@ -82,8 +82,8 @@ impl BufferPoolManager {
                 let mut page = page.write().await;
                 page.pin_count += 1;
             }
-            self.replacer.record_access(*frame_id);
-            self.replacer.set_evictable(*frame_id, false);
+            self.replacer.write().await.record_access(*frame_id);
+            self.replacer.write().await.set_evictable(*frame_id, false);
             return Ok(Some(page.clone()));
         }
         // fetch page from disk
@@ -98,8 +98,8 @@ impl BufferPoolManager {
                 page.pin_count = 1;
             }
             self.page_table.insert(page_id, frame_id);
-            self.replacer.record_access(frame_id);
-            self.replacer.set_evictable(frame_id, false);
+            self.replacer.write().await.record_access(frame_id);
+            self.replacer.write().await.set_evictable(frame_id, false);
             return Ok(Some(page.clone()));
         }
         Ok(None)
@@ -117,7 +117,7 @@ impl BufferPoolManager {
             }
             page.pin_count -= 1;
             if page.pin_count == 0 {
-                self.replacer.set_evictable(*frame_id, true);
+                self.replacer.write().await.set_evictable(*frame_id, true);
             }
             if is_dirty {
                 page.set_dirty(is_dirty);
@@ -167,7 +167,7 @@ impl BufferPoolManager {
                 page.set_dirty(false);
             }
             page.reset();
-            self.replacer.remove(*frame_id)?;
+            self.replacer.write().await.remove(*frame_id)?;
             self.free_list.push_back(*frame_id);
             self.page_table.remove(&page_id);
             return Ok(Some(page_id));
@@ -178,7 +178,7 @@ impl BufferPoolManager {
         if let Some(frame_id) = self.free_list.pop_front() {
             return Ok(Some(frame_id));
         }
-        if let Some(frame_id) = self.replacer.evict() {
+        if let Some(frame_id) = self.replacer.write().await.evict() {
             if let Some(page) = self.pages.get_mut(frame_id) {
                 let mut page = page.write().await;
                 if page.is_dirty() {
