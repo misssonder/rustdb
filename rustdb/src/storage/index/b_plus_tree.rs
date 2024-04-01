@@ -340,7 +340,7 @@ impl Index {
             false => Some(index + 1),
         };
         match node {
-            Node::Internal(mut internal) => {
+            Node::Internal(internal) => {
                 let (mut left_node, mut right_node, right_index) = {
                     if let Some(prev_index) = prev {
                         let prev_id = parent.kv[prev_index].1;
