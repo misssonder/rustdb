@@ -50,7 +50,7 @@ impl BufferPoolManager {
             let page_id = self.allocate_page();
             let mut page = Page::new(page_id);
             page.pin_count = 1;
-            self.pages.insert(frame_id, Arc::new(RwLock::new(page)));
+            self.pages[frame_id] = Arc::new(RwLock::new(page));
             self.page_table.insert(page_id, frame_id);
             self.replacer.write().await.record_access(frame_id);
             self.replacer.write().await.set_evictable(frame_id, false);
@@ -226,6 +226,7 @@ pub struct PageReadGuard<'a> {
     guard: RwLockReadGuard<'a, Page>,
 }
 
+//todo async drop
 impl Drop for PageRef {
     fn drop(&mut self) {
         let page = self.page.clone();
