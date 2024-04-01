@@ -325,12 +325,12 @@ impl<K> Internal<K> {
 
     pub fn is_overflow(&self) -> bool {
         // the max length of the key is m - 1
-        self.header.size + 1> self.header.max_size
+        self.header.size + 1 > self.header.max_size
     }
 
     pub fn is_underflow(&self) -> bool {
         // the max length of the key is m - 1
-        self.parent().is_some() && self.header.size + 1< self.header.max_size/2
+        self.parent().is_some() && self.header.size + 1 < self.header.max_size / 2
     }
 
     pub fn max_size(&self) -> usize {
