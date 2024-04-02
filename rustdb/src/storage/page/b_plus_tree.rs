@@ -4,7 +4,7 @@ use crate::storage::{PageId, RecordId, NULL_PAGE};
 use bytes::{Buf, BufMut};
 use std::cmp::Ordering;
 use std::fmt::Debug;
-use std::mem;
+use std::{mem, ptr};
 
 const INTERNAL_TYPE: u8 = 1;
 const LEAF_TYPE: u8 = 2;
@@ -404,12 +404,13 @@ impl<K> Internal<K> {
         None
     }
 
-    pub fn push_front(&mut self, key: K, val: PageId)
-    where
-        K: Default,
-    {
-        self.kv[0].0 = key;
-        self.kv.insert(0, (K::default(), val));
+    pub fn push_front(&mut self, key: K, val: PageId) {
+        self.kv.insert(0, (key, val));
+        let pa = ptr::addr_of_mut!(self.kv[0].0);
+        let pb = ptr::addr_of_mut!(self.kv[1].0);
+        unsafe {
+            ptr::swap(pa, pb);
+        }
         self.header.size += 1;
     }
 
@@ -506,7 +507,7 @@ impl<K> Leaf<K> {
         K: Ord,
     {
         match self.kv.binary_search_by(|(k, _)| k.cmp(key)) {
-            Ok(index) => Some(self.kv[index].1.clone()),
+            Ok(index) => Some(self.kv[index].1),
             Err(_) => None,
         }
     }
