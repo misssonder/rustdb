@@ -330,7 +330,7 @@ mod tests {
 
         let mut pages = Vec::new();
         // Scenario: We should be able to create new pages until we fill up the buffer pool.
-        for i in 1..buffer_pool_size {
+        for _ in 1..buffer_pool_size {
             let page = bpm.new_page_ref().await?;
             assert!(page.is_some());
             let page = page.unwrap();
@@ -338,29 +338,29 @@ mod tests {
         }
 
         // Scenario: Once the buffer pool is full, we should not be able to create any new pages.
-        for i in buffer_pool_size..2 * buffer_pool_size {
+        for _i in buffer_pool_size..2 * buffer_pool_size {
             assert!(bpm.new_page_ref().await?.is_none())
         }
 
         // Scenario: After unpinning pages {0, 1, 2, 3, 4}, we should be able to create 5 new pages
         {
-            let page0 = page0.write().await;
+            let _page0 = page0.write().await;
         }
         drop(page0);
         for i in 0..4 {
             if let Some(page) = pages.get(i) {
-                let page = page.write().await;
+                let _page = page.write().await;
             }
-            let page = pages.remove(0);
+            let _page = pages.remove(0);
             bpm.flush_page(i).await?;
         }
         // wait until page unpin
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        for i in 0..5 {
+        for _ in 0..5 {
             let page = bpm.new_page_ref().await?;
             assert!(page.is_some());
-            let page_id = page.unwrap().read().await.page_id();
+            let _page_id = page.unwrap().read().await.page_id();
         }
         // wait until page unpin
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -399,25 +399,25 @@ mod tests {
 
         // Scenario: We should be able to create new pages until we fill up the buffer pool.
         let mut pages = Vec::new();
-        for i in 1..buffer_pool_size {
+        for _ in 1..buffer_pool_size {
             let page = bpm.new_page_ref().await?;
             assert!(page.is_some());
             let page = page.unwrap();
             {
-                let page = page.write().await;
+                let _page = page.write().await;
             }
             pages.push(page);
         }
 
         // Scenario: Once the buffer pool is full, we should not be able to create any new pages.
-        for i in buffer_pool_size..buffer_pool_size * 2 {
+        for _ in buffer_pool_size..buffer_pool_size * 2 {
             assert!(bpm.new_page_ref().await?.is_none());
         }
 
         // Scenario: After unpinning pages {0, 1, 2, 3, 4} and pinning another 4 new pages,
         // there would still be one buffer page left for reading page 0.
         {
-            let page0 = page0.write().await;
+            let _page0 = page0.write().await;
         }
         drop(page0);
         for _ in 0..4 {
@@ -426,7 +426,7 @@ mod tests {
         // wait until page unpin
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        for i in 0..4 {
+        for _ in 0..4 {
             let page = bpm.new_page_ref().await?;
             assert!(page.is_some());
             pages.push(page.unwrap());
@@ -444,7 +444,7 @@ mod tests {
         // Scenario: If we unpin page 0 and then make a new page, all the buffer pages should
         // now be pinned. Fetching page 0 again should fail.
         {
-            let page0 = page0.write().await;
+            let _page0 = page0.write().await;
         }
         drop(page0);
         // wait until page unpin

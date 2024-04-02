@@ -516,7 +516,7 @@ impl Index {
 mod tests {
     use super::*;
     use crate::storage::disk::disk_manager::DiskManager;
-    use std::time::Duration;
+    
 
     #[tokio::test]
     async fn test_insert() -> RustDBResult<()> {
@@ -593,7 +593,7 @@ mod tests {
                 .await?;
         }
         index.print::<u32>().await?;
-        for i in (1..len) {
+        for i in 1..len {
             let val = index.delete(&(i as u32)).await?;
             println!("delete: {}", i);
             assert!(val.is_some());
