@@ -5,6 +5,7 @@ use crate::storage::page::b_plus_tree::{Header, Internal, Leaf, Node};
 use crate::storage::{PageId, RecordId};
 use std::collections::VecDeque;
 use std::fmt::Debug;
+use std::ops::Range;
 
 pub struct Index {
     buffer_pool: BufferPoolManager,
@@ -24,6 +25,72 @@ impl Index {
             }
         }
         Ok(None)
+    }
+
+    // todo change range to RangeBounds
+    pub async fn search_range<K>(&mut self, range: Range<K>) -> RustDBResult<Vec<RecordId>>
+    where
+        K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord,
+    {
+        let mut result = Vec::new();
+        if self.init {
+            let mut leaf = self.find_leaf(&range.start).await?.assume_leaf();
+            loop {
+                let start = leaf.kv.binary_search_by(|(k, _)| k.cmp(&range.start));
+                let end = leaf.kv.binary_search_by(|(k, _)| k.cmp(&range.end));
+                match (start, end) {
+                    (Ok(start_index), Ok(end_index)) => {
+                        for (_, v) in leaf.kv[start_index..=end_index].iter() {
+                            result.push(*v);
+                        }
+                    }
+                    (Ok(start_index), Err(end_index)) => {
+                        if end_index < leaf.kv.len() {
+                            for (_, v) in leaf.kv[start_index..=end_index].iter() {
+                                result.push(*v);
+                            }
+                        } else {
+                            for (_, v) in leaf.kv[start_index..].iter() {
+                                result.push(*v);
+                            }
+                        }
+                    }
+                    (Err(start_index), Ok(end_index)) => {
+                        for (_, v) in leaf.kv[start_index..=end_index].iter() {
+                            result.push(*v);
+                        }
+                    }
+                    (Err(start_index), Err(end_index)) => {
+                        if end_index == 0 {
+                            break;
+                        } else if end_index < leaf.kv.len() {
+                            if start_index < leaf.kv.len() {
+                                for (_, v) in leaf.kv[start_index..=end_index].iter() {
+                                    result.push(*v);
+                                }
+                            }
+                        } else if start_index < leaf.kv.len() {
+                            for (_, v) in leaf.kv[start_index..].iter() {
+                                result.push(*v);
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                match leaf.next() {
+                    None => break,
+                    Some(next_id) => {
+                        leaf = self
+                            .buffer_pool
+                            .fetch_page_node(next_id)
+                            .await?
+                            .assume_leaf();
+                    }
+                }
+            }
+        }
+        Ok(result)
     }
 
     pub async fn insert<K>(&mut self, key: K, value: RecordId) -> RustDBResult<()>
@@ -63,8 +130,8 @@ impl Index {
                 Node::Internal(ref mut _internal) => {}
                 Node::Leaf(ref mut leaf) => {
                     match leaf.kv.binary_search_by(|(k, _)| k.cmp(&key)) {
-                        Ok(index) => leaf.kv[index] = (key.clone(), value.clone()),
-                        Err(index) => leaf.insert(index, key.clone(), value.clone()),
+                        Ok(index) => leaf.kv[index] = (key.clone(), value),
+                        Err(index) => leaf.insert(index, key.clone(), value),
                     };
                     self.buffer_pool.encode_page_node(&node).await?;
                 }
@@ -516,8 +583,76 @@ impl Index {
 mod tests {
     use super::*;
     use crate::storage::disk::disk_manager::DiskManager;
-    
 
+    #[tokio::test]
+    async fn test_search_range() -> RustDBResult<()> {
+        let db_name = "test_search_range.db";
+        let disk_manager = DiskManager::new(db_name).await?;
+        let buffer_pool_manager = BufferPoolManager::new(50, 2, disk_manager).await?;
+        let mut index = Index {
+            buffer_pool: buffer_pool_manager,
+            root: 0,
+            init: false,
+            max_size: 100,
+        };
+        for i in (1..1000).rev() {
+            index
+                .insert(
+                    i as u32,
+                    RecordId {
+                        page_id: i,
+                        slot_num: 0,
+                    },
+                )
+                .await?;
+            // tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        let range = index
+            .search_range(Range {
+                start: 1,
+                end: 1000,
+            })
+            .await?;
+        assert_eq!(range.len(), 999);
+        for (index, record) in range.into_iter().enumerate() {
+            assert_eq!(index + 1, record.page_id);
+        }
+
+        let range = index
+            .search_range(Range {
+                start: 801,
+                end: 900,
+            })
+            .await?;
+        assert_eq!(range.len(), 100);
+        for (index, record) in range.into_iter().enumerate() {
+            assert_eq!(index + 801, record.page_id);
+        }
+
+        let range = index
+            .search_range(Range {
+                start: 800,
+                end: 1200,
+            })
+            .await?;
+        assert_eq!(range.len(), 200);
+        for (index, record) in range.into_iter().enumerate() {
+            assert_eq!(index + 800, record.page_id);
+        }
+
+        let range = index
+            .search_range(Range {
+                start: 0,
+                end: 1200,
+            })
+            .await?;
+        assert_eq!(range.len(), 999);
+        for (index, record) in range.into_iter().enumerate() {
+            assert_eq!(index + 1, record.page_id);
+        }
+        tokio::fs::remove_file(db_name).await?;
+        Ok(())
+    }
     #[tokio::test]
     async fn test_insert() -> RustDBResult<()> {
         let db_name = "test_insert.db";

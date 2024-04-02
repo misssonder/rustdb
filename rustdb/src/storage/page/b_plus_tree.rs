@@ -507,7 +507,7 @@ impl<K> Leaf<K> {
         K: Ord,
     {
         match self.kv.binary_search_by(|(k, _)| k.cmp(key)) {
-            Ok(index) => Some(self.kv[index].1.clone()),
+            Ok(index) => Some(self.kv[index].1),
             Err(_) => None,
         }
     }
