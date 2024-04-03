@@ -10,8 +10,7 @@ use tokio::io::AsyncWriteExt;
 
 pub struct Index {
     buffer_pool: BufferPoolManager,
-    root: PageId,
-    init: bool,
+    root: Option<PageId>,
     max_size: usize,
 }
 
@@ -20,10 +19,8 @@ impl Index {
     where
         K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord,
     {
-        if self.init {
-            if let Node::Leaf(ref leaf) = self.find_leaf(key).await? {
-                return Ok(leaf.search(key));
-            }
+        if let Some(Node::Leaf(ref leaf)) = self.find_leaf(key).await? {
+            return Ok(leaf.search(key));
         }
         Ok(None)
     }
@@ -34,8 +31,7 @@ impl Index {
         K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord,
     {
         let mut result = Vec::new();
-        if self.init {
-            let mut leaf = self.find_leaf(&range.start).await?.assume_leaf();
+        if let Some(Node::Leaf(mut leaf)) = self.find_leaf(&range.start).await? {
             loop {
                 let start = leaf.kv.binary_search_by(|(k, _)| k.cmp(&range.start));
                 let end = leaf.kv.binary_search_by(|(k, _)| k.cmp(&range.end));
@@ -99,23 +95,25 @@ impl Index {
     where
         K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord + Default + Clone,
     {
-        if !self.init {
+        if let Some(node) = self.find_leaf(&key).await? {
+            return self.insert_inner(node, key, value).await;
+        } else {
             self.init_tree(key, value).await?;
-            return Ok(());
-        }
-        let node = self.find_leaf(&key).await?;
-        self.insert_inner(node, key, value).await
+        };
+        Ok(())
     }
 
     pub async fn delete<K>(&mut self, key: &K) -> RustDBResult<Option<(K, RecordId)>>
     where
         K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord + Clone + Default,
     {
-        if !self.init {
+        if self.root.is_none() {
             return Ok(None);
         }
-        let node = self.find_leaf(key).await?;
-        self.delete_inner(node, key).await
+        if let Some(node) = self.find_leaf(key).await? {
+            return self.delete_inner(node, key).await;
+        };
+        Ok(None)
     }
 
     pub async fn insert_inner<K>(
@@ -181,7 +179,7 @@ impl Index {
                     ],
                 });
                 let parent_page = self.buffer_pool.new_page_node(&mut parent_node).await?;
-                self.root = parent_node.page_id();
+                self.root = Some(parent_node.page_id());
                 node.set_parent(parent_node.page_id());
                 sibling.set_parent(parent_node.page_id());
                 parent_page.write().await.write_back(&parent_node)?;
@@ -361,22 +359,24 @@ impl Index {
         Ok(None)
     }
 
-    async fn find_leaf<K>(&mut self, key: &K) -> RustDBResult<Node<K>>
+    async fn find_leaf<K>(&mut self, key: &K) -> RustDBResult<Option<Node<K>>>
     where
         K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord,
     {
-        let mut page_id = self.root;
-        loop {
-            let (page, node) = self.buffer_pool.fetch_page_node(page_id).await?;
-            match node {
-                Node::Internal(ref internal) => {
-                    page_id = internal.search(key).1;
-                }
-                Node::Leaf(leaf) => {
-                    return Ok(Node::Leaf(leaf));
+        if let Some(mut page_id) = self.root {
+            loop {
+                let (_page, node) = self.buffer_pool.fetch_page_node(page_id).await?;
+                match node {
+                    Node::Internal(ref internal) => {
+                        page_id = internal.search(key).1;
+                    }
+                    Node::Leaf(leaf) => {
+                        return Ok(Some(Node::Leaf(leaf)));
+                    }
                 }
             }
-        }
+        };
+        Ok(None)
     }
 
     /// merge this node and it's prev node or next node
@@ -428,9 +428,9 @@ impl Index {
                     child.set_parent(left_node.page_id());
                     child_page.write().await.write_back(&child)?;
                 }
-                if parent.header.size == 0 && self.root.eq(&parent.page_id()) {
+                if parent.header.size == 0 && self.root.eq(&Some(parent.page_id())) {
                     //change root node
-                    self.root = left_node.page_id();
+                    self.root = Some(left_node.page_id());
                     left_node.header.parent = None;
                     self.buffer_pool
                         .encode_page_node(&Node::Internal(left_node))
@@ -473,9 +473,9 @@ impl Index {
                 parent.kv.remove(right_index);
                 parent.header.size -= 1;
 
-                if parent.header.size == 0 && self.root.eq(&parent.page_id()) {
+                if parent.header.size == 0 && self.root.eq(&Some(parent.page_id())) {
                     //change root node
-                    self.root = left_node.page_id();
+                    self.root = Some(left_node.page_id());
                     left_node.header.parent = None;
                     self.buffer_pool
                         .encode_page_node(&Node::Leaf(left_node))
@@ -500,10 +500,6 @@ impl Index {
         }
     }
 
-    fn is_root<K>(&self, node: &Node<K>) -> bool {
-        self.root.eq(&node.page_id())
-    }
-
     async fn init_tree<K>(&mut self, key: K, value: RecordId) -> RustDBResult<()>
     where
         K: Encoder<Error = RustDBError>,
@@ -524,9 +520,8 @@ impl Index {
             },
             kv: vec![(key, value)],
         });
-        self.root = page.read().await.page_id();
+        self.root = Some(page.read().await.page_id());
         page.write().await.write_back(&node)?;
-        self.init = true;
         Ok(())
     }
 
@@ -535,43 +530,46 @@ impl Index {
         K: Decoder<Error = RustDBError> + Debug,
     {
         let mut pages = VecDeque::new();
-        pages.push_back(self.root);
-        loop {
-            let len = pages.len();
-            if len == 0 {
-                break;
-            }
-            for _ in 0..len {
-                let page_id = pages.pop_front().unwrap();
-                let page = self
-                    .buffer_pool
-                    .fetch_page_ref(page_id)
-                    .await?
-                    .ok_or(RustDBError::BufferPool("Can't not fetch page".into()))?;
-                let node: Node<K> = page.read().await.node()?;
-                match node {
-                    Node::Internal(internal) => {
-                        print!(
-                            "internal:{}[{:?}] ",
-                            internal.page_id(),
-                            internal.kv[1..].iter().map(|(k, _)| k).collect::<Vec<_>>()
-                        );
-                        for (_, page_id) in internal.kv.iter() {
-                            pages.push_back(*page_id);
+        if let Some(page_id) = self.root {
+            pages.push_back(page_id);
+            loop {
+                let len = pages.len();
+                if len == 0 {
+                    break;
+                }
+                for _ in 0..len {
+                    let page_id = pages.pop_front().unwrap();
+                    let page = self
+                        .buffer_pool
+                        .fetch_page_ref(page_id)
+                        .await?
+                        .ok_or(RustDBError::BufferPool("Can't not fetch page".into()))?;
+                    let node: Node<K> = page.read().await.node()?;
+                    match node {
+                        Node::Internal(internal) => {
+                            print!(
+                                "internal:{}[{:?}] ",
+                                internal.page_id(),
+                                internal.kv[1..].iter().map(|(k, _)| k).collect::<Vec<_>>()
+                            );
+                            for (_, page_id) in internal.kv.iter() {
+                                pages.push_back(*page_id);
+                            }
+                        }
+                        Node::Leaf(leaf) => {
+                            print!(
+                                "leaf:{}[{:?}] ",
+                                leaf.page_id(),
+                                leaf.kv.iter().map(|(k, _)| k).collect::<Vec<_>>()
+                            );
                         }
                     }
-                    Node::Leaf(leaf) => {
-                        print!(
-                            "leaf:{}[{:?}] ",
-                            leaf.page_id(),
-                            leaf.kv.iter().map(|(k, _)| k).collect::<Vec<_>>()
-                        );
-                    }
                 }
+                println!();
             }
             println!();
         }
-        println!();
+
         Ok(())
     }
 }
@@ -588,8 +586,7 @@ mod tests {
         let buffer_pool_manager = BufferPoolManager::new(50, 2, disk_manager).await?;
         let mut index = Index {
             buffer_pool: buffer_pool_manager,
-            root: 0,
-            init: false,
+            root: None,
             max_size: 100,
         };
         for i in (1..1000).rev() {
@@ -657,8 +654,7 @@ mod tests {
         let buffer_pool_manager = BufferPoolManager::new(50, 2, disk_manager).await?;
         let mut index = Index {
             buffer_pool: buffer_pool_manager,
-            root: 0,
-            init: false,
+            root: None,
             max_size: 4,
         };
         for i in (1..100).rev() {
@@ -692,8 +688,7 @@ mod tests {
         let buffer_pool_manager = BufferPoolManager::new(100, 2, disk_manager).await?;
         let mut index = Index {
             buffer_pool: buffer_pool_manager,
-            root: 0,
-            init: false,
+            root: None,
             max_size: 4,
         };
         let len = 100;
