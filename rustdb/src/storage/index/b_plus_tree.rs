@@ -401,7 +401,7 @@ impl Index {
     }
 
     /// merge this node and it's prev node or next node
-    /// return it's parent node
+    /// return true if the node which been merged become the root
     pub async fn merge<K>(
         &mut self,
         parent_page: &PageRef,
@@ -437,7 +437,7 @@ impl Index {
                         let next_node = next_node.assume_internal();
                         (page, internal, next_page, next_node, next_index)
                     } else {
-                        return Ok(true);
+                        unreachable!()
                     }
                 };
                 let changed_children = right_node.kv.iter().map(|(_, p)| *p).collect::<Vec<_>>();
@@ -494,7 +494,7 @@ impl Index {
                         let next_node = next_node.assume_leaf();
                         (page, leaf, next_page, next_node, next_index)
                     } else {
-                        return Ok(true);
+                        unreachable!()
                     }
                 };
                 left_node.merge(&mut right_node);
