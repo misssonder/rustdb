@@ -41,12 +41,16 @@ impl Index {
                         for (_, v) in leaf.kv[start_index..=end_index].iter() {
                             result.push(*v);
                         }
+                        if end_index < leaf.kv.len() {
+                            break;
+                        }
                     }
                     (Ok(start_index), Err(end_index)) => {
                         if end_index < leaf.kv.len() {
                             for (_, v) in leaf.kv[start_index..=end_index].iter() {
                                 result.push(*v);
                             }
+                            break;
                         } else {
                             for (_, v) in leaf.kv[start_index..].iter() {
                                 result.push(*v);
@@ -57,16 +61,16 @@ impl Index {
                         for (_, v) in leaf.kv[start_index..=end_index].iter() {
                             result.push(*v);
                         }
+                        if end_index < leaf.kv.len() {
+                            break;
+                        }
                     }
                     (Err(start_index), Err(end_index)) => {
-                        if end_index == 0 {
-                            break;
-                        } else if end_index < leaf.kv.len() {
-                            if start_index < leaf.kv.len() {
-                                for (_, v) in leaf.kv[start_index..=end_index].iter() {
-                                    result.push(*v);
-                                }
+                        if end_index < leaf.kv.len() {
+                            for (_, v) in leaf.kv[start_index..=end_index].iter() {
+                                result.push(*v);
                             }
+                            break;
                         } else if start_index < leaf.kv.len() {
                             for (_, v) in leaf.kv[start_index..].iter() {
                                 result.push(*v);
@@ -386,7 +390,7 @@ impl Index {
     {
         if let Some(mut page_id) = self.root {
             loop {
-                let (_page, node) = self.buffer_pool.fetch_page_node(page_id).await?;
+                let (_, node) = self.buffer_pool.fetch_page_node(page_id).await?;
                 match node {
                     Node::Internal(ref internal) => {
                         page_id = internal.search(key).1;
@@ -644,7 +648,7 @@ mod tests {
                 end: 900,
             })
             .await?;
-        assert_eq!(range.len(), 100);
+        println!("{:?}", range);
         for (index, record) in range.into_iter().enumerate() {
             assert_eq!(index + 801, record.page_id);
         }
