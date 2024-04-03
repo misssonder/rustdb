@@ -173,17 +173,16 @@ impl BufferPoolManager {
 }
 
 impl BufferPoolManager {
-    pub async fn fetch_page_node<K>(&mut self, page_id: PageId) -> RustDBResult<(PageRef,Node<K>)>
+    pub async fn fetch_page_node<K>(&mut self, page_id: PageId) -> RustDBResult<(PageRef, Node<K>)>
     where
         K: Decoder<Error = RustDBError>,
     {
-        let page = self.fetch_page_ref(page_id)
+        let page = self
+            .fetch_page_ref(page_id)
             .await?
             .ok_or(RustDBError::BufferPool("Can't fetch page".into()))?;
-        let node = page.read()
-        .await
-        .node()?;
-        Ok((page,node))
+        let node = page.read().await.node()?;
+        Ok((page, node))
     }
 
     pub async fn encode_page_node<K>(&mut self, node: &Node<K>) -> RustDBResult<()>
