@@ -196,18 +196,6 @@ impl BufferPoolManager {
         Ok((page, node))
     }
 
-    pub async fn encode_page_node<K>(&self, node: &Node<K>) -> RustDBResult<()>
-    where
-        K: Encoder<Error = RustDBError>,
-    {
-        self.fetch_page_ref(node.page_id())
-            .await?
-            .ok_or(RustDBError::BufferPool("Can't fetch page".into()))?
-            .write()
-            .await
-            .write_back(node)
-    }
-
     pub async fn new_page_node<K>(&self, node: &mut Node<K>) -> RustDBResult<PageRef>
     where
         K: Encoder<Error = RustDBError>,
