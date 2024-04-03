@@ -3,9 +3,10 @@ use crate::storage::{PageId, PAGE_SIZE};
 use std::io::SeekFrom;
 use std::path::Path;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
+use tokio::sync::RwLock;
 
 pub struct DiskManager {
-    db_file: tokio::fs::File,
+    db_file: RwLock<tokio::fs::File>,
 }
 
 impl DiskManager {
@@ -17,20 +18,24 @@ impl DiskManager {
             .create(true)
             .open(path)
             .await?;
-        Ok(DiskManager { db_file })
+        Ok(DiskManager {
+            db_file: RwLock::new(db_file),
+        })
     }
 
-    pub async fn write_page(&mut self, page_id: PageId, page_data: &[u8]) -> RustDBResult<()> {
+    pub async fn write_page(&self, page_id: PageId, page_data: &[u8]) -> RustDBResult<()> {
         let offset = PAGE_SIZE as u64 * page_id as u64;
-        self.db_file.seek(SeekFrom::Start(offset)).await?;
-        self.db_file.write_all(page_data).await?;
-        self.db_file.flush().await?;
+        let mut db_file = self.db_file.write().await;
+        db_file.seek(SeekFrom::Start(offset)).await?;
+        db_file.write_all(page_data).await?;
+        db_file.flush().await?;
         Ok(())
     }
-    pub async fn read_page(&mut self, page_id: PageId, page_data: &mut [u8]) -> RustDBResult<()> {
+    pub async fn read_page(&self, page_id: PageId, page_data: &mut [u8]) -> RustDBResult<()> {
         let offset = PAGE_SIZE as u64 * page_id as u64;
-        self.db_file.seek(SeekFrom::Start(offset)).await?;
-        self.db_file.read_exact(page_data).await?;
+        let mut db_file = self.db_file.write().await;
+        db_file.seek(SeekFrom::Start(offset)).await?;
+        db_file.read_exact(page_data).await?;
         Ok(())
     }
 }
