@@ -6,6 +6,7 @@ use crate::storage::{PageId, RecordId};
 use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::ops::Range;
+use tokio::io::AsyncWriteExt;
 
 pub struct Index {
     buffer_pool: BufferPoolManager,
@@ -85,6 +86,7 @@ impl Index {
                             .buffer_pool
                             .fetch_page_node(next_id)
                             .await?
+                            .1
                             .assume_leaf();
                     }
                 }
@@ -140,26 +142,28 @@ impl Index {
                 return Ok(());
             }
             let (median_key, mut sibling) = node.split();
-            self.buffer_pool.new_page_encode(&mut sibling).await?;
+            let sibling_page = self.buffer_pool.new_page_node(&mut sibling).await?;
             let sibling_page_id = sibling.page_id();
             if let Node::Internal(ref mut internal) = sibling {
                 for (_, child) in internal.kv.iter() {
-                    let mut child_node: Node<K> = self.buffer_pool.fetch_page_node(*child).await?;
+                    let (child_page, mut child_node) =
+                        self.buffer_pool.fetch_page_node::<K>(*child).await?;
                     child_node.set_parent(sibling_page_id);
-                    self.buffer_pool.encode_page_node(&child_node).await?;
+                    child_page.write().await.write_back(&child_node)?;
                 }
             }
             node.set_next(sibling.page_id());
             sibling.set_prev(node.page_id());
             let parent_node = if let Some(parent_id) = node.parent() {
-                let mut parent_node: Node<K> = self.buffer_pool.fetch_page_node(parent_id).await?;
+                let (parent_page, mut parent_node) =
+                    self.buffer_pool.fetch_page_node::<K>(parent_id).await?;
                 let internal = parent_node.assume_internal_mut();
                 let index = internal
                     .kv
                     .binary_search_by(|(k, _)| k.cmp(&median_key))
                     .unwrap_or_else(|index| index);
                 internal.insert(index, median_key.clone(), sibling_page_id);
-                self.buffer_pool.encode_page_node(&parent_node).await?;
+                parent_page.write().await.write_back(&parent_node)?;
                 parent_node
             } else {
                 let mut parent_node = Node::Internal(Internal {
@@ -176,14 +180,15 @@ impl Index {
                         (median_key.clone(), sibling_page_id),
                     ],
                 });
-                self.buffer_pool.new_page_encode(&mut parent_node).await?;
+                let parent_page = self.buffer_pool.new_page_node(&mut parent_node).await?;
                 self.root = parent_node.page_id();
                 node.set_parent(parent_node.page_id());
                 sibling.set_parent(parent_node.page_id());
+                parent_page.write().await.write_back(&parent_node)?;
                 parent_node
             };
             self.buffer_pool.encode_page_node(&node).await?;
-            self.buffer_pool.encode_page_node(&sibling).await?;
+            sibling_page.write().await.write_back(&sibling)?;
             node = parent_node;
         }
     }
@@ -214,12 +219,9 @@ impl Index {
             match node.parent() {
                 None => break,
                 Some(parent_id) => {
-                    let mut parent: Internal<K> = self
-                        .buffer_pool
-                        .fetch_page_node(parent_id)
-                        .await?
-                        .assume_internal();
-
+                    let (_parent_page, parent) =
+                        self.buffer_pool.fetch_page_node::<K>(parent_id).await?;
+                    let mut parent = parent.assume_internal();
                     let (index, _) = parent.search(key);
                     if self.steal(&mut parent, &mut node, index).await?.is_some() {
                         break;
@@ -256,23 +258,20 @@ impl Index {
             Node::Internal(internal) => {
                 if let Some(prev_index) = prev {
                     let prev_id = parent.kv[prev_index].1;
-                    let mut prev_page: Internal<K> = self
-                        .buffer_pool
-                        .fetch_page_node(prev_id)
-                        .await?
-                        .assume_internal();
-                    if let Some(steal) = prev_page.steal_last() {
+                    let (prev_page, mut prev_node) =
+                        self.buffer_pool.fetch_page_node::<K>(prev_id).await?;
+                    let mut prev_node = prev_node.assume_internal();
+                    if let Some(steal) = prev_node.steal_last() {
                         // steal from prev node and change parent
                         let right_index = index;
                         internal.push_front(parent.kv[right_index].0.clone(), steal.1);
                         parent.kv[right_index].0 = steal.0;
                         // change child parent pointer
-                        let mut child: Node<K> = self.buffer_pool.fetch_page_node(steal.1).await?;
+                        let (child_page, mut child) =
+                            self.buffer_pool.fetch_page_node::<K>(steal.1).await?;
                         child.set_parent(internal.page_id());
-                        self.buffer_pool.encode_page_node(&child).await?;
-                        self.buffer_pool
-                            .encode_page_node(&Node::Internal(prev_page))
-                            .await?;
+                        child_page.write().await.write_back(&child)?;
+                        prev_page.write().await.write_back(&Node::Internal(prev_node))?;
                         self.buffer_pool
                             .encode_page_node(&Node::Internal(internal.clone()))
                             .await?;
@@ -284,23 +283,20 @@ impl Index {
                 }
                 if let Some(next_index) = next {
                     let next_id = parent.kv[next_index].1;
-                    let mut next_page: Internal<K> = self
-                        .buffer_pool
-                        .fetch_page_node(next_id)
-                        .await?
-                        .assume_internal();
-                    if let Some(steal) = next_page.steal_first() {
+                    let (next_page, mut next_node) =
+                        self.buffer_pool.fetch_page_node::<K>(next_id).await?;
+                    let mut next_node = next_node.assume_internal();
+                    if let Some(steal) = next_node.steal_first() {
                         // steal from next node and change parent
                         let right_index = next_index;
                         internal.push_back(parent.kv[right_index].0.clone(), steal.1);
                         parent.kv[right_index].0 = steal.0;
                         // change child parent pointer
-                        let mut child: Node<K> = self.buffer_pool.fetch_page_node(steal.1).await?;
+                        let (child_page, mut child) =
+                            self.buffer_pool.fetch_page_node::<K>(steal.1).await?;
                         child.set_parent(internal.page_id());
-                        self.buffer_pool.encode_page_node(&child).await?;
-                        self.buffer_pool
-                            .encode_page_node(&Node::Internal(next_page))
-                            .await?;
+                        child_page.write().await.write_back(&child)?;
+                        next_page.write().await.write_back(&Node::Internal(next_node))?;
                         self.buffer_pool
                             .encode_page_node(&Node::Internal(internal.clone()))
                             .await?;
@@ -314,19 +310,15 @@ impl Index {
             Node::Leaf(ref mut leaf) => {
                 if let Some(prev_index) = prev {
                     let prev_id = parent.kv[prev_index].1;
-                    let mut prev_page: Leaf<K> = self
-                        .buffer_pool
-                        .fetch_page_node(prev_id)
-                        .await?
-                        .assume_leaf();
-                    if let Some(steal) = prev_page.steal_last() {
+                    let (prev_page, mut prev_node) =
+                        self.buffer_pool.fetch_page_node::<K>(prev_id).await?;
+                    let mut prev_node = prev_node.assume_leaf();
+                    if let Some(steal) = prev_node.steal_last() {
                         let right_index = index;
                         parent.kv[right_index].0 = steal.0.clone();
                         let (key, value) = steal;
                         leaf.push_front(key, value);
-                        self.buffer_pool
-                            .encode_page_node(&Node::Leaf(prev_page))
-                            .await?;
+                        prev_page.write().await.write_back(&Node::Leaf(prev_node))?;
                         self.buffer_pool
                             .encode_page_node(&Node::Leaf(leaf.clone()))
                             .await?;
@@ -338,20 +330,16 @@ impl Index {
                 }
                 if let Some(next_index) = next {
                     let next_id = parent.kv[next_index].1;
-                    let mut next_page: Leaf<K> = self
-                        .buffer_pool
-                        .fetch_page_node(next_id)
-                        .await?
-                        .assume_leaf();
-                    if let Some(steal) = next_page.steal_first() {
+                    let (next_page, mut next_node) =
+                        self.buffer_pool.fetch_page_node::<K>(next_id).await?;
+                    let mut next_node = next_node.assume_leaf();
+                    if let Some(steal) = next_node.steal_first() {
                         // steal from next node and change parent
                         let right_index = next_index;
-                        parent.kv[right_index].0 = next_page.kv[0].0.clone();
+                        parent.kv[right_index].0 = next_node.kv[0].0.clone();
                         let (key, value) = steal;
                         leaf.push_back(key, value);
-                        self.buffer_pool
-                            .encode_page_node(&Node::Leaf(next_page))
-                            .await?;
+                        next_page.write().await.write_back(&Node::Leaf(next_node))?;
                         self.buffer_pool
                             .encode_page_node(&Node::Leaf(leaf.clone()))
                             .await?;
@@ -372,10 +360,8 @@ impl Index {
         K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord,
     {
         let mut page_id = self.root;
-        let mut route = Vec::new();
         loop {
-            let node: Node<K> = self.buffer_pool.fetch_page_node(page_id).await?;
-            route.push(node.page_id());
+            let (page, node) = self.buffer_pool.fetch_page_node(page_id).await?;
             match node {
                 Node::Internal(ref internal) => {
                     page_id = internal.search(key).1;
@@ -411,12 +397,14 @@ impl Index {
                 let (mut left_node, mut right_node, right_index) = {
                     if let Some(prev_index) = prev {
                         let prev_id = parent.kv[prev_index].1;
-                        let prev_node: Node<K> = self.buffer_pool.fetch_page_node(prev_id).await?;
+                        let (_prev_page, prev_node) =
+                            self.buffer_pool.fetch_page_node(prev_id).await?;
                         let prev_node = prev_node.assume_internal();
                         (prev_node, internal, index)
                     } else if let Some(next_index) = next {
                         let next_id = parent.kv[next_index].1;
-                        let next_node: Node<K> = self.buffer_pool.fetch_page_node(next_id).await?;
+                        let (_next_page, next_node) =
+                            self.buffer_pool.fetch_page_node(next_id).await?;
                         let next_node = next_node.assume_internal();
                         (internal, next_node, next_index)
                     } else {
@@ -429,9 +417,10 @@ impl Index {
                 left_node.merge(key, &mut right_node);
                 // change the children's parent id
                 for child_id in changed_children {
-                    let mut child: Node<K> = self.buffer_pool.fetch_page_node(child_id).await?;
+                    let (child_page, mut child) =
+                        self.buffer_pool.fetch_page_node::<K>(child_id).await?;
                     child.set_parent(left_node.page_id());
-                    self.buffer_pool.encode_page_node(&child).await?;
+                    child_page.write().await.write_back(&child)?;
                 }
                 if parent.header.size == 0 && self.root.eq(&parent.page_id()) {
                     //change root node
@@ -460,12 +449,14 @@ impl Index {
                 let (mut left_node, mut right_node, right_index) = {
                     if let Some(prev_index) = prev {
                         let prev_id = parent.kv[prev_index].1;
-                        let prev_node: Node<K> = self.buffer_pool.fetch_page_node(prev_id).await?;
+                        let (_prev_page, prev_node) =
+                            self.buffer_pool.fetch_page_node(prev_id).await?;
                         let prev_node = prev_node.assume_leaf();
                         (prev_node, leaf, index)
                     } else if let Some(next_index) = next {
                         let next_id = parent.kv[next_index].1;
-                        let next_node: Node<K> = self.buffer_pool.fetch_page_node(next_id).await?;
+                        let (_next_page, next_node) =
+                            self.buffer_pool.fetch_page_node(next_id).await?;
                         let next_node = next_node.assume_leaf();
                         (leaf, next_node, next_index)
                     } else {

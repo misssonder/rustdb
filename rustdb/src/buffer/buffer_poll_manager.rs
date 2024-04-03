@@ -173,16 +173,17 @@ impl BufferPoolManager {
 }
 
 impl BufferPoolManager {
-    pub async fn fetch_page_node<K>(&mut self, page_id: PageId) -> RustDBResult<Node<K>>
+    pub async fn fetch_page_node<K>(&mut self, page_id: PageId) -> RustDBResult<(PageRef,Node<K>)>
     where
         K: Decoder<Error = RustDBError>,
     {
-        self.fetch_page_ref(page_id)
+        let page = self.fetch_page_ref(page_id)
             .await?
-            .ok_or(RustDBError::BufferPool("Can't fetch page".into()))?
-            .read()
-            .await
-            .node()
+            .ok_or(RustDBError::BufferPool("Can't fetch page".into()))?;
+        let node = page.read()
+        .await
+        .node()?;
+        Ok((page,node))
     }
 
     pub async fn encode_page_node<K>(&mut self, node: &Node<K>) -> RustDBResult<()>
@@ -197,7 +198,7 @@ impl BufferPoolManager {
             .write_back(node)
     }
 
-    pub async fn new_page_encode<K>(&mut self, node: &mut Node<K>) -> RustDBResult<()>
+    pub async fn new_page_node<K>(&mut self, node: &mut Node<K>) -> RustDBResult<PageRef>
     where
         K: Encoder<Error = RustDBError>,
     {
@@ -207,8 +208,7 @@ impl BufferPoolManager {
             .ok_or(RustDBError::BufferPool("Can't new page".into()))?;
         let page_id = page.read().await.page_id();
         node.set_page_id(page_id);
-        node.encode(&mut page.write().await.mut_data())?;
-        Ok(())
+        Ok(page)
     }
 }
 
