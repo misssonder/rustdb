@@ -70,6 +70,20 @@ impl<K> Node<K> {
         }
     }
 
+    pub fn allow_insert(&self) -> bool {
+        match self {
+            Node::Internal(internal) => internal.allow_insert(),
+            Node::Leaf(leaf) => leaf.allow_insert(),
+        }
+    }
+
+    pub fn allow_delete(&self) -> bool {
+        match self {
+            Node::Internal(internal) => internal.allow_delete(),
+            Node::Leaf(leaf) => leaf.allow_delete(),
+        }
+    }
+
     pub fn parent(&self) -> Option<PageId> {
         match self {
             Node::Internal(node) => node.parent(),
@@ -333,6 +347,14 @@ impl<K> Internal<K> {
         self.parent().is_some() && self.header.size + 1 < self.header.max_size / 2
     }
 
+    pub fn allow_insert(&self) -> bool {
+        self.header.size + 1 < self.header.max_size
+    }
+
+    pub fn allow_delete(&self) -> bool {
+        self.parent().is_none() || self.header.size + 1 > self.header.max_size / 2
+    }
+
     pub fn max_size(&self) -> usize {
         self.header.max_size
     }
@@ -518,6 +540,14 @@ impl<K> Leaf<K> {
 
     pub fn is_underflow(&self) -> bool {
         self.parent().is_some() && self.header.size < self.header.max_size / 2
+    }
+
+    pub fn allow_insert(&self) -> bool {
+        self.header.size < self.header.max_size - 1
+    }
+
+    pub fn allow_delete(&self) -> bool {
+        self.parent().is_none() || self.header.size > self.header.max_size / 2
     }
 
     pub fn max_size(&self) -> usize {

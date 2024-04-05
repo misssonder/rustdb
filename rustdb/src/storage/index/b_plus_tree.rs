@@ -1,8 +1,11 @@
-use crate::buffer::buffer_poll_manager::{BufferPoolManager, PageRef};
+use crate::buffer::buffer_poll_manager::{
+    BufferPoolManager, OwnedPageReadGuard, OwnedPageWriteGuard, PageRef,
+};
 use crate::error::{RustDBError, RustDBResult};
 use crate::storage::codec::{Decoder, Encoder};
 use crate::storage::page::b_plus_tree::{Header, Internal, Leaf, Node};
 use crate::storage::{PageId, RecordId};
+use indexmap::IndexMap;
 use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::ops::Range;
@@ -15,13 +18,21 @@ pub struct Index {
 }
 
 impl Index {
-    pub async fn search<K>(&mut self, key: &K) -> RustDBResult<Option<RecordId>>
+    pub async fn search<K>(&self, key: &K) -> RustDBResult<Option<RecordId>>
     where
         K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord,
     {
-        if let Some(page) = self.find_page_leaf(key).await? {
-            let leaf = page.read().await.node::<K>()?.assume_leaf();
-            return Ok(leaf.search(key));
+        let mut route = Route::new(RouteOption::default());
+        if let Some(page_id) = self.find_route(key, &mut route).await? {
+            match route.nodes.get(&page_id).unwrap().latch {
+                Latch::Read(ref guard) => {
+                    let leaf = guard.node::<K>()?.assume_leaf();
+                    return Ok(leaf.search(key));
+                }
+                Latch::Write(ref guard) => {
+                    unreachable!()
+                }
+            }
         }
         Ok(None)
     }
@@ -226,7 +237,7 @@ impl Index {
                 Some(parent_id) => {
                     let (parent_page, parent) =
                         self.buffer_pool.fetch_page_node::<K>(parent_id).await?;
-                    let mut parent = parent.assume_internal();
+                    let parent = parent.assume_internal();
                     let (index, _) = parent.search(key);
                     if self.steal::<K>(&parent_page, &page, index).await?.is_some() {
                         break;
@@ -252,7 +263,7 @@ impl Index {
         K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord + Default + Clone,
     {
         let mut parent: Internal<K> = parent_page.read().await.node()?.assume_internal();
-        let mut node: Node<K> = page.read().await.node()?;
+        let node: Node<K> = page.read().await.node()?;
         //steal from left
         let prev = match index > 0 {
             true => Some(index - 1),
@@ -365,45 +376,6 @@ impl Index {
         Ok(None)
     }
 
-    async fn find_page_leaf<K>(&mut self, key: &K) -> RustDBResult<Option<PageRef>>
-    where
-        K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord,
-    {
-        if let Some(mut page_id) = self.root {
-            loop {
-                let (page, node) = self.buffer_pool.fetch_page_node(page_id).await?;
-                match node {
-                    Node::Internal(ref internal) => {
-                        page_id = internal.search(key).1;
-                    }
-                    Node::Leaf(_) => {
-                        return Ok(Some(page));
-                    }
-                }
-            }
-        };
-        Ok(None)
-    }
-    async fn find_leaf<K>(&mut self, key: &K) -> RustDBResult<Option<Node<K>>>
-    where
-        K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord,
-    {
-        if let Some(mut page_id) = self.root {
-            loop {
-                let (_, node) = self.buffer_pool.fetch_page_node(page_id).await?;
-                match node {
-                    Node::Internal(ref internal) => {
-                        page_id = internal.search(key).1;
-                    }
-                    Node::Leaf(leaf) => {
-                        return Ok(Some(Node::Leaf(leaf)));
-                    }
-                }
-            }
-        };
-        Ok(None)
-    }
-
     /// merge this node and it's prev node or next node
     /// return true if the node which been merged become the root
     pub async fn merge<K>(
@@ -416,7 +388,7 @@ impl Index {
         K: Encoder<Error = RustDBError> + Decoder<Error = RustDBError> + Clone + Ord,
     {
         let mut parent: Internal<K> = parent_page.read().await.node()?.assume_internal();
-        let mut node: Node<K> = page.read().await.node()?;
+        let node: Node<K> = page.read().await.node()?;
         let prev = match index > 0 {
             true => Some(index - 1),
             false => None,
@@ -426,7 +398,7 @@ impl Index {
             false => Some(index + 1),
         };
         match node {
-            Node::Internal(mut internal) => {
+            Node::Internal(internal) => {
                 let (left_page, mut left_node, right_page, mut right_node, right_index) = {
                     if let Some(prev_index) = prev {
                         let prev_id = parent.kv[prev_index].1;
@@ -483,7 +455,7 @@ impl Index {
                     .write_back(&Node::Internal(parent))?;
                 Ok(false)
             }
-            Node::Leaf(mut leaf) => {
+            Node::Leaf(leaf) => {
                 let (left_page, mut left_node, right_page, mut right_node, right_index) = {
                     if let Some(prev_index) = prev {
                         let prev_id = parent.kv[prev_index].1;
@@ -528,6 +500,114 @@ impl Index {
                 Ok(false)
             }
         }
+    }
+
+    async fn find_page_leaf<K>(&mut self, key: &K) -> RustDBResult<Option<PageRef>>
+    where
+        K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord,
+    {
+        if let Some(mut page_id) = self.root {
+            loop {
+                let (page, node) = self.buffer_pool.fetch_page_node(page_id).await?;
+                match node {
+                    Node::Internal(ref internal) => {
+                        page_id = internal.search(key).1;
+                    }
+                    Node::Leaf(_) => {
+                        return Ok(Some(page));
+                    }
+                }
+            }
+        };
+        Ok(None)
+    }
+
+    /// take latches according to latch crabbin
+    /// if current node is safe, then release parent latch
+    /// if current node is unsafe, then take parent latch
+    async fn find_route<K>(&self, key: &K, route: &mut Route) -> RustDBResult<Option<PageId>>
+    where
+        K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord,
+    {
+        if let Some(mut page_id) = self.root {
+            let mut parent_index = 0;
+            loop {
+                let page = self
+                    .buffer_pool
+                    .fetch_page_ref(page_id)
+                    .await?
+                    .ok_or(RustDBError::BufferPool("Can't fetch page".into()))?;
+                let read_guard = page.read().await;
+                let node = read_guard.node::<K>()?;
+                if let Some(parent_id) = node.parent() {
+                    match route.option.action {
+                        RouteAction::Search => {
+                            route.nodes.shift_remove(&parent_id);
+                        }
+                        RouteAction::Insert => {
+                            if node.allow_insert() {
+                                route.nodes.shift_remove(&parent_id);
+                            }
+                        }
+                        RouteAction::Delete => {
+                            if node.allow_delete() {
+                                route.nodes.shift_remove(&parent_id);
+                            }
+                        }
+                    }
+                }
+                match node {
+                    Node::Internal(ref internal) => {
+                        let (index, child_id) = internal.search(key);
+                        drop(read_guard);
+                        let latch = if route.option.internal_latch_write {
+                            let write_guard = page.write_owned().await;
+                            Latch::Write(write_guard)
+                        } else {
+                            let read_guard = page.read_owned().await;
+                            Latch::Read(read_guard)
+                        };
+                        let node = RouteNode::new(latch, parent_index);
+                        route.nodes.insert(page_id, node);
+                        parent_index = index;
+                        page_id = child_id;
+                    }
+                    Node::Leaf(_) => {
+                        drop(read_guard);
+                        if route.option.leaf_latch_write {
+                            let write_guard = page.write_owned().await;
+                            let node = RouteNode::new(Latch::Write(write_guard), parent_index);
+                            route.nodes.insert(page_id, node);
+                        } else {
+                            let read_guard = page.read_owned().await;
+                            let node = RouteNode::new(Latch::Read(read_guard), parent_index);
+                            route.nodes.insert(page_id, node);
+                        }
+                        return Ok(Some(page_id));
+                    }
+                }
+            }
+        };
+        Ok(None)
+    }
+    async fn find_leaf<K>(&mut self, key: &K) -> RustDBResult<Option<Node<K>>>
+    where
+        K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord,
+    {
+        if let Some(mut page_id) = self.root {
+            loop {
+                let (_, node) = self.buffer_pool.fetch_page_node(page_id).await?;
+                match node {
+                    Node::Internal(ref internal) => {
+                        page_id = internal.search(key).1;
+                    }
+                    Node::Leaf(leaf) => {
+                        return Ok(Some(Node::Leaf(leaf)));
+                    }
+                }
+            }
+        };
+        Ok(None)
     }
 
     async fn init_tree<K>(&mut self, key: K, value: RecordId) -> RustDBResult<()>
@@ -602,6 +682,78 @@ impl Index {
 
         Ok(())
     }
+}
+
+struct Route {
+    nodes: IndexMap<PageId, RouteNode>,
+    option: RouteOption,
+}
+
+impl Route {
+    fn new(option: RouteOption) -> Self {
+        Self {
+            nodes: Default::default(),
+            option,
+        }
+    }
+}
+
+enum RouteAction {
+    Search,
+    Insert,
+    Delete,
+}
+
+struct RouteOption {
+    internal_latch_write: bool,
+    leaf_latch_write: bool,
+    action: RouteAction,
+}
+
+impl Default for RouteOption {
+    fn default() -> Self {
+        Self {
+            internal_latch_write: false,
+            leaf_latch_write: false,
+            action: RouteAction::Search,
+        }
+    }
+}
+
+impl RouteOption {
+    fn with_internal(mut self, write: bool) -> Self {
+        self.internal_latch_write = write;
+        self
+    }
+
+    fn with_leaf(mut self, write: bool) -> Self {
+        self.leaf_latch_write = write;
+        self
+    }
+
+    fn with_action(mut self, action: RouteAction) -> Self {
+        self.action = action;
+        self
+    }
+}
+
+struct RouteNode {
+    latch: Latch,
+    parent_index: usize,
+}
+
+impl RouteNode {
+    fn new(latch: Latch, parent_index: usize) -> Self {
+        RouteNode {
+            latch,
+            parent_index,
+        }
+    }
+}
+
+enum Latch {
+    Read(OwnedPageReadGuard),
+    Write(OwnedPageWriteGuard),
 }
 
 #[cfg(test)]

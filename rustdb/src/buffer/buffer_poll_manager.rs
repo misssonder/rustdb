@@ -11,7 +11,9 @@ use std::io::Write;
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use tokio::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use tokio::sync::{
+    OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock, RwLockReadGuard, RwLockWriteGuard,
+};
 
 pub struct BufferPoolManager {
     pages: RwLock<Vec<Arc<RwLock<Page>>>>,
@@ -224,6 +226,16 @@ pub struct PageReadGuard<'a> {
     guard: RwLockReadGuard<'a, Page>,
 }
 
+pub struct OwnedPageWriteGuard {
+    guard: OwnedRwLockWriteGuard<Page>,
+    page_ref: PageRef,
+}
+
+pub struct OwnedPageReadGuard {
+    guard: OwnedRwLockReadGuard<Page>,
+    page_ref: PageRef,
+}
+
 //todo async drop
 impl Drop for PageRef {
     fn drop(&mut self) {
@@ -269,6 +281,34 @@ impl Deref for PageReadGuard<'_> {
     }
 }
 
+impl Deref for OwnedPageWriteGuard {
+    type Target = Page;
+
+    fn deref(&self) -> &Self::Target {
+        self.guard.deref()
+    }
+}
+
+impl DerefMut for OwnedPageWriteGuard {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.guard.deref_mut()
+    }
+}
+
+impl Drop for OwnedPageWriteGuard {
+    fn drop(&mut self) {
+        self.set_dirty(true);
+    }
+}
+
+impl Deref for OwnedPageReadGuard {
+    type Target = Page;
+
+    fn deref(&self) -> &Self::Target {
+        self.guard.deref()
+    }
+}
+
 impl PageRef {
     pub fn new(
         page: Arc<RwLock<Page>>,
@@ -282,14 +322,28 @@ impl PageRef {
         }
     }
     pub async fn write(&self) -> PageWriteGuard<'_> {
-        let mut guard = self.page.write().await;
-        guard.set_dirty(true);
+        let guard = self.page.write().await;
         PageWriteGuard { guard }
     }
 
     pub async fn read(&self) -> PageReadGuard<'_> {
-        PageReadGuard {
-            guard: self.page.read().await,
+        let guard = self.page.read().await;
+        PageReadGuard { guard }
+    }
+
+    pub async fn write_owned(self) -> OwnedPageWriteGuard {
+        let guard = self.page.clone().write_owned().await;
+        OwnedPageWriteGuard {
+            guard,
+            page_ref: self,
+        }
+    }
+
+    pub async fn read_owned(self) -> OwnedPageReadGuard {
+        let guard = self.page.clone().read_owned().await;
+        OwnedPageReadGuard {
+            guard,
+            page_ref: self,
         }
     }
 }
@@ -310,7 +364,7 @@ mod tests {
         // No matter if `char` is signed or unsigned by default, this constraint must be met
 
         let disk_manager = DiskManager::new(db_name).await?;
-        let mut bpm = BufferPoolManager::new(buffer_pool_size, k, disk_manager).await?;
+        let bpm = BufferPoolManager::new(buffer_pool_size, k, disk_manager).await?;
 
         let page0 = bpm.new_page_ref().await?;
 
@@ -382,7 +436,7 @@ mod tests {
         let k = 5;
 
         let disk_manager = DiskManager::new(db_name).await?;
-        let mut bpm = BufferPoolManager::new(buffer_pool_size, k, disk_manager).await?;
+        let bpm = BufferPoolManager::new(buffer_pool_size, k, disk_manager).await?;
 
         let page0 = bpm.new_page_ref().await?;
 
