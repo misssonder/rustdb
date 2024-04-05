@@ -186,6 +186,46 @@ impl BufferPoolManager {
 }
 
 impl BufferPoolManager {
+    pub async fn fetch_page_read_owned(&self, page_id: PageId) -> RustDBResult<OwnedPageReadGuard> {
+        let page = self
+            .fetch_page_ref(page_id)
+            .await?
+            .ok_or(RustDBError::BufferPool("Can't fetch page".into()))?
+            .read_owned()
+            .await;
+        Ok(page)
+    }
+
+    pub async fn fetch_page_write_owned(
+        &self,
+        page_id: PageId,
+    ) -> RustDBResult<OwnedPageWriteGuard> {
+        let page = self
+            .fetch_page_ref(page_id)
+            .await?
+            .ok_or(RustDBError::BufferPool("Can't fetch page".into()))?
+            .write_owned()
+            .await;
+        Ok(page)
+    }
+
+    pub async fn new_page_write_owned<K>(
+        &self,
+        node: &mut Node<K>,
+    ) -> RustDBResult<OwnedPageWriteGuard>
+    where
+        K: Encoder<Error = RustDBError>,
+    {
+        let guard = self
+            .new_page_ref()
+            .await?
+            .ok_or(RustDBError::BufferPool("Can't new page".into()))?
+            .write_owned()
+            .await;
+        let page_id = guard.page_id();
+        node.set_page_id(page_id);
+        Ok(guard)
+    }
     pub async fn fetch_page_node<K>(&self, page_id: PageId) -> RustDBResult<(PageRef, Node<K>)>
     where
         K: Decoder<Error = RustDBError>,

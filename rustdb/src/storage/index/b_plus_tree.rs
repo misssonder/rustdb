@@ -111,8 +111,13 @@ impl Index {
     where
         K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord + Default + Clone,
     {
-        if let Some(page) = self.find_page_leaf(&key).await? {
-            return self.insert_inner(page, key, value).await;
+        let option = RouteOption::default()
+            .with_internal(true)
+            .with_leaf(true)
+            .with_action(RouteAction::Insert);
+        let mut route = Route::new(option);
+        if let Some(page_id) = self.find_route(&key, &mut route).await? {
+            return self.insert_inner(page_id, route, key, value).await;
         } else {
             self.init_tree(key, value).await?;
         };
@@ -134,7 +139,8 @@ impl Index {
 
     pub async fn insert_inner<K>(
         &mut self,
-        mut page: PageRef,
+        mut page_id: PageId,
+        mut route: Route,
         key: K,
         value: RecordId,
     ) -> RustDBResult<()>
@@ -142,7 +148,13 @@ impl Index {
         K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord + Default + Clone,
     {
         loop {
-            let mut node: Node<K> = page.read().await.node()?;
+            let mut latch = route
+                .nodes
+                .shift_remove(&page_id)
+                .unwrap()
+                .latch
+                .assume_write();
+            let mut node: Node<K> = latch.node()?;
             match node {
                 Node::Internal(ref mut _internal) => {}
                 Node::Leaf(ref mut leaf) => {
@@ -150,36 +162,44 @@ impl Index {
                         Ok(index) => leaf.kv[index] = (key.clone(), value),
                         Err(index) => leaf.insert(index, key.clone(), value),
                     };
-                    page.write().await.write_back(&node)?;
+                    latch.write_back(&node)?;
                 }
             }
             if !node.is_overflow() {
                 return Ok(());
             }
             let (median_key, mut sibling) = node.split();
-            let sibling_page = self.buffer_pool.new_page_node(&mut sibling).await?;
+            let mut sibling_latch = self.buffer_pool.new_page_write_owned(&mut sibling).await?;
             let sibling_page_id = sibling.page_id();
             if let Node::Internal(ref mut internal) = sibling {
                 for (_, child) in internal.kv.iter() {
-                    let (child_page, mut child_node) =
-                        self.buffer_pool.fetch_page_node::<K>(*child).await?;
+                    let mut child_latch = self.buffer_pool.fetch_page_write_owned(*child).await?;
+                    let mut child_node = child_latch.node::<K>()?;
                     child_node.set_parent(sibling_page_id);
-                    child_page.write().await.write_back(&child_node)?;
+                    child_latch.write_back(&child_node)?;
                 }
             }
             node.set_next(sibling.page_id());
             sibling.set_prev(node.page_id());
-            let (parent_page, parent_node) = if let Some(parent_id) = node.parent() {
-                let (parent_page, mut parent_node) =
-                    self.buffer_pool.fetch_page_node::<K>(parent_id).await?;
+            if let Some(parent_id) = node.parent() {
+                let parent_latch = route
+                    .nodes
+                    .get_mut(&parent_id)
+                    .unwrap()
+                    .latch
+                    .assume_write_mut();
+                let mut parent_node = parent_latch.node::<K>()?;
                 let internal = parent_node.assume_internal_mut();
                 let index = internal
                     .kv
                     .binary_search_by(|(k, _)| k.cmp(&median_key))
                     .unwrap_or_else(|index| index);
                 internal.insert(index, median_key.clone(), sibling_page_id);
-                parent_page.write().await.write_back(&parent_node)?;
-                (parent_page, parent_node)
+
+                parent_latch.write_back(&parent_node)?;
+                sibling_latch.write_back(&sibling)?;
+                latch.write_back(&node)?;
+                page_id = parent_latch.page_id();
             } else {
                 let mut parent_node = Node::Internal(Internal {
                     header: Header {
@@ -195,16 +215,23 @@ impl Index {
                         (median_key.clone(), sibling_page_id),
                     ],
                 });
-                let parent_page = self.buffer_pool.new_page_node(&mut parent_node).await?;
+                let mut parent_latch = self
+                    .buffer_pool
+                    .new_page_write_owned(&mut parent_node)
+                    .await?;
+                let parent_id = parent_node.page_id();
                 self.root = Some(parent_node.page_id());
                 node.set_parent(parent_node.page_id());
                 sibling.set_parent(parent_node.page_id());
-                parent_page.write().await.write_back(&parent_node)?;
-                (parent_page, parent_node)
+
+                parent_latch.write_back(&parent_node)?;
+                sibling_latch.write_back(&sibling)?;
+                latch.write_back(&node)?;
+                route
+                    .nodes
+                    .insert(parent_id, RouteNode::new(Latch::Write(parent_latch), 1));
+                page_id = parent_id;
             };
-            page.write().await.write_back(&node)?;
-            sibling_page.write().await.write_back(&sibling)?;
-            page = parent_page
         }
     }
 
@@ -754,6 +781,46 @@ impl RouteNode {
 enum Latch {
     Read(OwnedPageReadGuard),
     Write(OwnedPageWriteGuard),
+}
+
+impl Latch {
+    fn node<K>(&self) -> RustDBResult<Node<K>>
+    where
+        K: Decoder<Error = RustDBError>,
+    {
+        match self {
+            Latch::Read(guard) => guard.node(),
+            Latch::Write(guard) => guard.node(),
+        }
+    }
+
+    fn assume_write_mut(&mut self) -> &mut OwnedPageWriteGuard {
+        match self {
+            Latch::Read(_) => unreachable!(),
+            Latch::Write(guard) => guard,
+        }
+    }
+
+    fn assume_write(self) -> OwnedPageWriteGuard {
+        match self {
+            Latch::Read(_) => unreachable!(),
+            Latch::Write(guard) => guard,
+        }
+    }
+
+    fn assume_write_ref(&self) -> &OwnedPageWriteGuard {
+        match self {
+            Latch::Read(_) => unreachable!(),
+            Latch::Write(guard) => guard,
+        }
+    }
+
+    fn assume_read(&self) -> &OwnedPageReadGuard {
+        match self {
+            Latch::Read(guard) => guard,
+            Latch::Write(guard) => unreachable!(),
+        }
+    }
 }
 
 #[cfg(test)]
