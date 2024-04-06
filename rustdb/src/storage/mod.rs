@@ -1,3 +1,4 @@
+use std::sync::atomic::AtomicUsize;
 use crate::error::RustDBError;
 use crate::storage::codec::{Decoder, Encoder};
 use bytes::{Buf, BufMut};
@@ -9,6 +10,8 @@ pub mod page;
 
 pub const PAGE_SIZE: usize = 4096;
 pub type PageId = usize;
+
+pub type AtomicPageId= AtomicUsize;
 pub const NULL_PAGE: PageId = PageId::MAX;
 
 #[derive(Debug, Copy, Clone, PartialOrd, PartialEq)]

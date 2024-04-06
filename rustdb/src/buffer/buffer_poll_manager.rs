@@ -15,6 +15,7 @@ use tokio::sync::{
     OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock, RwLockReadGuard, RwLockWriteGuard,
 };
 
+//fixme will be dead lock, need to be fixed
 pub struct BufferPoolManager {
     pages: RwLock<Vec<Arc<RwLock<Page>>>>,
     replacer: Arc<RwLock<LruKReplacer>>,
