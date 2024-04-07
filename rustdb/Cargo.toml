@@ -7,5 +7,6 @@ edition = "2021"
 
 [dependencies]
 bytes.workspace = true
+indexmap.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["full"] }

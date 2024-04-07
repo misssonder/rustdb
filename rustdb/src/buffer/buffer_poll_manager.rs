@@ -5,21 +5,29 @@ use crate::storage::codec::{Decoder, Encoder};
 use crate::storage::disk::disk_manager::DiskManager;
 use crate::storage::page::b_plus_tree::Node;
 use crate::storage::page::Page;
-use crate::storage::PageId;
+use crate::storage::{PageId, PAGE_SIZE};
 use std::collections::{HashMap, VecDeque};
+use std::io::Write;
 use std::ops::{Deref, DerefMut};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
-use tokio::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use tokio::sync::{
+    OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock, RwLockReadGuard, RwLockWriteGuard,
+};
 
+//fixme will be dead lock, need to be fixed
 pub struct BufferPoolManager {
-    pages: Vec<Arc<RwLock<Page>>>,
-    replacer: Arc<RwLock<LruKReplacer>>,
-    page_table: HashMap<PageId, FrameId>,
-    free_list: VecDeque<FrameId>,
+    inner: RwLock<Inner>,
     disk_manager: DiskManager,
     next_page_id: AtomicUsize,
     pool_size: usize,
+}
+
+struct Inner {
+    pages: Vec<Arc<Page>>,
+    replacer: Arc<RwLock<LruKReplacer>>,
+    page_table: HashMap<PageId, FrameId>,
+    free_list: VecDeque<FrameId>,
 }
 
 impl BufferPoolManager {
@@ -31,83 +39,93 @@ impl BufferPoolManager {
         }
         let pages = {
             let mut v = Vec::with_capacity(pool_size);
-            (0..pool_size).for_each(|_| v.push(Arc::new(RwLock::new(Page::new(0)))));
+            (0..pool_size).for_each(|_| v.push(Arc::new(Page::new(0))));
             v
         };
-        Ok(Self {
+        let inner = Inner {
             pages,
             replacer,
-            page_table: HashMap::new(),
+            page_table: HashMap::with_capacity(pool_size),
             free_list,
+        };
+        Ok(Self {
+            inner: RwLock::new(inner),
             disk_manager,
             next_page_id: AtomicUsize::new(0),
             pool_size,
         })
     }
 
-    pub async fn new_page_ref(&mut self) -> RustDBResult<Option<PageRef>> {
-        if let Some(frame_id) = self.available_frame().await? {
+    pub async fn new_page_ref(&self) -> RustDBResult<Option<PageRef>> {
+        let mut inner = self.inner.write().await;
+        if let Some(frame_id) = self.available_frame(&mut inner).await? {
             let page_id = self.allocate_page();
-            let mut page = Page::new(page_id);
-            page.pin_count = 1;
-            self.pages[frame_id] = Arc::new(RwLock::new(page));
-            self.page_table.insert(page_id, frame_id);
-            self.replacer.write().await.record_access(frame_id);
-            self.replacer.write().await.set_evictable(frame_id, false);
-            return Ok(self
-                .pages
-                .get(frame_id)
-                .map(|page| PageRef::new(page.clone(), frame_id, self.replacer.clone())));
-        }
-        Ok(None)
-    }
-
-    pub async fn fetch_page_ref(&mut self, page_id: PageId) -> RustDBResult<Option<PageRef>> {
-        // fetch page from cache
-        if let Some(frame_id) = self.page_table.get(&page_id) {
-            let page = self.pages.get_mut(*frame_id).unwrap();
-            {
-                let mut page = page.write().await;
-                page.pin_count += 1;
-            }
-            self.replacer.write().await.record_access(*frame_id);
-            self.replacer.write().await.set_evictable(*frame_id, false);
-            return Ok(Some(PageRef::new(
-                page.clone(),
-                *frame_id,
-                self.replacer.clone(),
-            )));
-        }
-        // fetch page from disk
-        if let Some(frame_id) = self.available_frame().await? {
-            let page = self.pages.get_mut(frame_id).unwrap();
-            {
-                let mut page = page.write().await;
-                self.disk_manager
-                    .read_page(page_id, page.mut_data())
-                    .await?;
-                page.set_page_id(page_id);
-                page.pin_count = 1;
-            }
-            self.page_table.insert(page_id, frame_id);
-            self.replacer.write().await.record_access(frame_id);
-            self.replacer.write().await.set_evictable(frame_id, false);
+            let page = Arc::new(Page::new(page_id));
+            page.pin_count.store(1, Ordering::Relaxed);
+            inner.pages[frame_id] = page.clone();
+            inner.page_table.insert(page_id, frame_id);
+            let mut replacer = inner.replacer.write().await;
+            replacer.record_access(frame_id);
+            replacer.set_evictable(frame_id, false);
             return Ok(Some(PageRef::new(
                 page.clone(),
                 frame_id,
-                self.replacer.clone(),
+                inner.replacer.clone(),
             )));
         }
         Ok(None)
     }
 
-    pub async fn flush_page(&mut self, page_id: PageId) -> RustDBResult<()> {
-        if let Some(frame_id) = self.page_table.get(&page_id) {
-            let page = self.pages.get_mut(*frame_id).unwrap();
-            let mut page = page.write().await;
+    pub async fn fetch_page_ref(&self, page_id: PageId) -> RustDBResult<Option<PageRef>> {
+        let mut inner = self.inner.write().await;
+        // fetch page from cache
+        if let Some(frame_id) = inner.page_table.get(&page_id).cloned() {
+            // we can't take lock guard when we fetch from page; or it will be deadlock
+            let page = inner.pages[frame_id].clone();
+            page.pin_count.fetch_add(1, Ordering::Relaxed);
+            let mut replacer = inner.replacer.write().await;
+            replacer.record_access(frame_id);
+            replacer.set_evictable(frame_id, false);
+            return Ok(Some(PageRef::new(
+                page.clone(),
+                frame_id,
+                inner.replacer.clone(),
+            )));
+        }
+        // fetch page from disk
+        let frame_id = self.available_frame(&mut inner).await?;
+        if let Some(frame_id) = frame_id {
+            let page = inner.pages[frame_id].clone();
+            let page_data = page.data();
+            let mut page_data = page_data.write().await;
+            self.disk_manager
+                .read_page(page_id, page_data.as_mut())
+                .await?;
+            drop(page_data);
+            page.set_page_id(page_id);
+            page.pin_count.store(1, Ordering::Relaxed);
+            inner.page_table.insert(page_id, frame_id);
+            let mut replacer = inner.replacer.write().await;
+            replacer.record_access(frame_id);
+            replacer.set_evictable(frame_id, false);
+            return Ok(Some(PageRef::new(
+                page.clone(),
+                frame_id,
+                inner.replacer.clone(),
+            )));
+        }
+        Ok(None)
+    }
+
+    pub async fn flush_page(&self, page_id: PageId) -> RustDBResult<()> {
+        let inner = self.inner.write().await;
+        if let Some(frame_id) = inner.page_table.get(&page_id).cloned() {
+            let page = inner.pages[frame_id].clone();
+            let page_data = page.data();
+            let mut page_data = page_data.write().await;
             if page.is_dirty() {
                 self.disk_manager
-                    .write_page(page.page_id(), page.data())
+                    .write_page(page.page_id(), page_data.as_mut())
                     .await?;
                 page.set_dirty(false);
             }
@@ -115,12 +133,14 @@ impl BufferPoolManager {
         Ok(())
     }
 
-    pub async fn flush_page_all(&mut self) -> RustDBResult<()> {
-        for page in self.pages.iter_mut() {
-            let mut page = page.write().await;
+    pub async fn flush_page_all(&self) -> RustDBResult<()> {
+        let inner = self.inner.write().await;
+        for page in inner.pages.iter() {
+            let page_data = page.data();
+            let mut page_data = page_data.write().await;
             if page.is_dirty() {
                 self.disk_manager
-                    .write_page(page.page_id(), page.data())
+                    .write_page(page.page_id(), page_data.as_mut())
                     .await?;
                 page.set_dirty(false);
             }
@@ -128,42 +148,51 @@ impl BufferPoolManager {
         Ok(())
     }
 
-    pub async fn delete_page(&mut self, page_id: PageId) -> RustDBResult<Option<PageId>> {
-        if let Some(frame_id) = self.page_table.get(&page_id) {
-            let mut page = self.pages.get_mut(*frame_id).unwrap().write().await;
-            if page.pin_count > 0 {
+    pub async fn delete_page(&self, page_id: PageId) -> RustDBResult<Option<PageId>> {
+        let mut inner = self.inner.write().await;
+        if let Some(frame_id) = inner.page_table.get(&page_id).cloned() {
+            let page = inner.pages[frame_id].clone();
+            if page.pin_count.load(Ordering::Relaxed) > 0 {
                 return Ok(None);
             }
+            let page_data = page.data();
+            let mut page_data = page_data.write().await;
             if page.is_dirty() {
                 self.disk_manager
-                    .write_page(page.page_id(), page.data())
+                    .write_page(page.page_id(), page_data.as_mut())
                     .await?;
                 page.set_dirty(false);
             }
-            page.reset();
-            self.replacer.write().await.remove(*frame_id)?;
-            self.free_list.push_back(*frame_id);
-            self.page_table.remove(&page_id);
+            drop(page_data);
+            page.reset().await;
+            inner.replacer.write().await.remove(frame_id)?;
+            inner.free_list.push_back(frame_id);
+            inner.page_table.remove(&page_id);
             return Ok(Some(page_id));
         }
         Ok(None)
     }
-    async fn available_frame(&mut self) -> RustDBResult<Option<FrameId>> {
-        if let Some(frame_id) = self.free_list.pop_front() {
+    async fn available_frame(
+        &self,
+        inner: &mut RwLockWriteGuard<'_, Inner>,
+    ) -> RustDBResult<Option<FrameId>> {
+        if let Some(frame_id) = inner.free_list.pop_front() {
             return Ok(Some(frame_id));
         }
-        if let Some(frame_id) = self.replacer.write().await.evict() {
-            if let Some(page) = self.pages.get_mut(frame_id) {
-                let mut page = page.write().await;
-                if page.is_dirty() {
-                    self.disk_manager
-                        .write_page(page.page_id(), page.data())
-                        .await?;
-                    page.set_dirty(false);
-                }
-                self.page_table.remove(&page.page_id());
-                return Ok(Some(frame_id));
+        let frame_id = inner.replacer.write().await.evict();
+        if let Some(frame_id) = frame_id {
+            let page = inner.pages[frame_id].clone();
+            let page_data = page.data();
+            let mut page_data = page_data.write().await;
+            if page.is_dirty() {
+                self.disk_manager
+                    .write_page(page.page_id(), page_data.as_mut())
+                    .await?;
+                page.set_dirty(false);
             }
+            drop(page_data);
+            inner.page_table.remove(&page.page_id());
+            return Ok(Some(frame_id));
         }
         Ok(None)
     }
@@ -173,7 +202,50 @@ impl BufferPoolManager {
 }
 
 impl BufferPoolManager {
-    pub async fn fetch_page_node<K>(&mut self, page_id: PageId) -> RustDBResult<(PageRef, Node<K>)>
+    pub async fn fetch_page_read_owned(
+        &self,
+        page_id: PageId,
+    ) -> RustDBResult<OwnedPageDataReadGuard> {
+        let page = self
+            .fetch_page_ref(page_id)
+            .await?
+            .ok_or(RustDBError::BufferPool("Can't fetch page".into()))?
+            .data_read_owned()
+            .await;
+        Ok(page)
+    }
+
+    pub async fn fetch_page_write_owned(
+        &self,
+        page_id: PageId,
+    ) -> RustDBResult<OwnedPageDataWriteGuard> {
+        let page = self
+            .fetch_page_ref(page_id)
+            .await?
+            .ok_or(RustDBError::BufferPool("Can't fetch page".into()))?
+            .data_write_owned()
+            .await;
+        Ok(page)
+    }
+
+    pub async fn new_page_write_owned<K>(
+        &self,
+        node: &mut Node<K>,
+    ) -> RustDBResult<OwnedPageDataWriteGuard>
+    where
+        K: Encoder<Error = RustDBError>,
+    {
+        let guard = self
+            .new_page_ref()
+            .await?
+            .ok_or(RustDBError::BufferPool("Can't new page".into()))?
+            .data_write_owned()
+            .await;
+        let page_id = guard.page_ref.page_id();
+        node.set_page_id(page_id);
+        Ok(guard)
+    }
+    pub async fn fetch_page_node<K>(&self, page_id: PageId) -> RustDBResult<(PageRef, Node<K>)>
     where
         K: Decoder<Error = RustDBError>,
     {
@@ -181,23 +253,11 @@ impl BufferPoolManager {
             .fetch_page_ref(page_id)
             .await?
             .ok_or(RustDBError::BufferPool("Can't fetch page".into()))?;
-        let node = page.read().await.node()?;
+        let node = page.page.node().await?;
         Ok((page, node))
     }
 
-    pub async fn encode_page_node<K>(&mut self, node: &Node<K>) -> RustDBResult<()>
-    where
-        K: Encoder<Error = RustDBError>,
-    {
-        self.fetch_page_ref(node.page_id())
-            .await?
-            .ok_or(RustDBError::BufferPool("Can't fetch page".into()))?
-            .write()
-            .await
-            .write_back(node)
-    }
-
-    pub async fn new_page_node<K>(&mut self, node: &mut Node<K>) -> RustDBResult<PageRef>
+    pub async fn new_page_node<K>(&self, node: &mut Node<K>) -> RustDBResult<PageRef>
     where
         K: Encoder<Error = RustDBError>,
     {
@@ -205,65 +265,150 @@ impl BufferPoolManager {
             .new_page_ref()
             .await?
             .ok_or(RustDBError::BufferPool("Can't new page".into()))?;
-        let page_id = page.read().await.page_id();
+        let page_id = page.page.page_id();
         node.set_page_id(page_id);
         Ok(page)
     }
 }
+pub trait NodeTrait {
+    fn node<K>(&self) -> RustDBResult<Node<K>>
+    where
+        K: Decoder<Error = RustDBError>;
+    fn write_back<K>(&mut self, node: &Node<K>) -> RustDBResult<()>
+    where
+        K: Encoder<Error = RustDBError>;
+}
 
+impl NodeTrait for [u8; PAGE_SIZE] {
+    fn node<K>(&self) -> RustDBResult<Node<K>>
+    where
+        K: Decoder<Error = RustDBError>,
+    {
+        Node::decode(&mut self.as_ref())
+    }
+
+    fn write_back<K>(&mut self, node: &Node<K>) -> RustDBResult<()>
+    where
+        K: Encoder<Error = RustDBError>,
+    {
+        node.encode(&mut self.as_mut())
+    }
+}
 pub struct PageRef {
-    page: Arc<RwLock<Page>>,
+    page: Arc<Page>,
     frame_id: FrameId,
     replacer: Arc<RwLock<LruKReplacer>>,
 }
 
-pub struct PageWriteGuard<'a> {
-    guard: RwLockWriteGuard<'a, Page>,
+pub struct PageDataWriteGuard<'a> {
+    guard: RwLockWriteGuard<'a, [u8; PAGE_SIZE]>,
+    page_id: PageId,
+    is_dirty: &'a AtomicBool,
 }
 
-pub struct PageReadGuard<'a> {
-    guard: RwLockReadGuard<'a, Page>,
+pub struct PageDataReadGuard<'a> {
+    guard: RwLockReadGuard<'a, [u8; PAGE_SIZE]>,
+    page_id: PageId,
 }
 
-//todo async drop
+pub struct OwnedPageDataWriteGuard {
+    guard: OwnedRwLockWriteGuard<[u8; PAGE_SIZE]>,
+    page_ref: PageRef,
+}
+
+pub struct OwnedPageDataReadGuard {
+    guard: OwnedRwLockReadGuard<[u8; PAGE_SIZE]>,
+    page_ref: PageRef,
+}
+
+impl PageDataWriteGuard<'_> {
+    pub fn page_id(&self) -> PageId {
+        self.page_id
+    }
+}
+
+impl PageDataReadGuard<'_> {
+    pub fn page_id(&self) -> PageId {
+        self.page_id
+    }
+}
+
+impl OwnedPageDataWriteGuard {
+    pub fn page_id(&self) -> PageId {
+        self.page_ref.page_id()
+    }
+}
+
+impl OwnedPageDataReadGuard {
+    pub fn page_id(&self) -> PageId {
+        self.page_ref.page_id()
+    }
+}
+
 impl Drop for PageRef {
     fn drop(&mut self) {
         let page = self.page.clone();
         let frame_id = self.frame_id;
         let replacer = self.replacer.clone();
         tokio::spawn(async move {
-            let mut page = page.write().await;
-            page.pin_count -= 1;
-            let pin_count = page.pin_count;
-            if pin_count == 0 {
+            let prev = page.pin_count.fetch_sub(1, Ordering::Relaxed);
+            if prev == 1 {
                 replacer.write().await.set_evictable(frame_id, true);
             }
         });
     }
 }
 
-impl Deref for PageWriteGuard<'_> {
-    type Target = Page;
+impl Deref for PageDataWriteGuard<'_> {
+    type Target = [u8; PAGE_SIZE];
 
     fn deref(&self) -> &Self::Target {
         self.guard.deref()
     }
 }
 
-impl DerefMut for PageWriteGuard<'_> {
+impl DerefMut for PageDataWriteGuard<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.guard.deref_mut()
     }
 }
 
-impl Drop for PageWriteGuard<'_> {
+impl Drop for PageDataWriteGuard<'_> {
     fn drop(&mut self) {
-        self.set_dirty(true);
+        self.is_dirty.store(true, Ordering::Relaxed);
     }
 }
 
-impl Deref for PageReadGuard<'_> {
-    type Target = Page;
+impl Deref for PageDataReadGuard<'_> {
+    type Target = [u8; PAGE_SIZE];
+
+    fn deref(&self) -> &Self::Target {
+        self.guard.deref()
+    }
+}
+
+impl Deref for OwnedPageDataWriteGuard {
+    type Target = [u8; PAGE_SIZE];
+
+    fn deref(&self) -> &Self::Target {
+        self.guard.deref()
+    }
+}
+
+impl DerefMut for OwnedPageDataWriteGuard {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.guard.deref_mut()
+    }
+}
+
+impl Drop for OwnedPageDataWriteGuard {
+    fn drop(&mut self) {
+        self.page_ref.page.set_dirty(true);
+    }
+}
+
+impl Deref for OwnedPageDataReadGuard {
+    type Target = [u8; PAGE_SIZE];
 
     fn deref(&self) -> &Self::Target {
         self.guard.deref()
@@ -271,26 +416,47 @@ impl Deref for PageReadGuard<'_> {
 }
 
 impl PageRef {
-    pub fn new(
-        page: Arc<RwLock<Page>>,
-        frame_id: FrameId,
-        replacer: Arc<RwLock<LruKReplacer>>,
-    ) -> Self {
+    pub fn new(page: Arc<Page>, frame_id: FrameId, replacer: Arc<RwLock<LruKReplacer>>) -> Self {
         Self {
             page,
             frame_id,
             replacer,
         }
     }
-    pub async fn write(&self) -> PageWriteGuard<'_> {
-        let mut guard = self.page.write().await;
-        guard.set_dirty(true);
-        PageWriteGuard { guard }
+
+    pub fn page_id(&self) -> PageId {
+        self.page.page_id()
+    }
+    pub async fn data_write(&self) -> PageDataWriteGuard<'_> {
+        let guard = self.page.data_ref().write().await;
+        PageDataWriteGuard {
+            guard,
+            page_id: self.page.page_id(),
+            is_dirty: &self.page.is_dirty,
+        }
     }
 
-    pub async fn read(&self) -> PageReadGuard<'_> {
-        PageReadGuard {
-            guard: self.page.read().await,
+    pub async fn data_read(&self) -> PageDataReadGuard<'_> {
+        let guard = self.page.data_ref().read().await;
+        PageDataReadGuard {
+            guard,
+            page_id: self.page_id(),
+        }
+    }
+
+    pub async fn data_write_owned(self) -> OwnedPageDataWriteGuard {
+        let guard = self.page.data().write_owned().await;
+        OwnedPageDataWriteGuard {
+            guard,
+            page_ref: self,
+        }
+    }
+
+    pub async fn data_read_owned(self) -> OwnedPageDataReadGuard {
+        let guard = self.page.data().read_owned().await;
+        OwnedPageDataReadGuard {
+            guard,
+            page_ref: self,
         }
     }
 }
@@ -311,21 +477,17 @@ mod tests {
         // No matter if `char` is signed or unsigned by default, this constraint must be met
 
         let disk_manager = DiskManager::new(db_name).await?;
-        let mut bpm = BufferPoolManager::new(buffer_pool_size, k, disk_manager).await?;
+        let bpm = BufferPoolManager::new(buffer_pool_size, k, disk_manager).await?;
 
         let page0 = bpm.new_page_ref().await?;
 
         // Scenario: The buffer pool is empty. We should be able to create a new page.
         assert!(page0.is_some());
         let page0 = page0.unwrap();
-        assert_eq!(0, page0.read().await.page_id());
+        assert_eq!(0, page0.page.page_id());
 
         // Scenario: Once we have a page, we should be able to read and write content.
-        page0
-            .write()
-            .await
-            .mut_data()
-            .clone_from_slice(&random_data);
+        page0.data_write().await.clone_from_slice(&random_data);
 
         let mut pages = Vec::new();
         // Scenario: We should be able to create new pages until we fill up the buffer pool.
@@ -343,12 +505,12 @@ mod tests {
 
         // Scenario: After unpinning pages {0, 1, 2, 3, 4}, we should be able to create 5 new pages
         {
-            let _page0 = page0.write().await;
+            let _page0 = page0.data_write().await;
         }
         drop(page0);
         for i in 0..4 {
             if let Some(page) = pages.get(i) {
-                let _page = page.write().await;
+                let _page = page.data_write().await;
             }
             let _page = pages.remove(0);
             bpm.flush_page(i).await?;
@@ -359,7 +521,7 @@ mod tests {
         for _ in 0..5 {
             let page = bpm.new_page_ref().await?;
             assert!(page.is_some());
-            let _page_id = page.unwrap().read().await.page_id();
+            let _page_id = page.unwrap().page_id();
         }
         // wait until page unpin
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -368,7 +530,7 @@ mod tests {
         let page0 = bpm.fetch_page_ref(0).await?;
         assert!(page0.is_some());
         let page0 = page0.unwrap();
-        assert_eq!(page0.read().await.data(), &random_data);
+        assert_eq!(page0.data_read().await.as_ref(), &random_data);
 
         // Shutdown the disk manager and remove the temporary file we created.
         tokio::fs::remove_file(db_name).await?;
@@ -383,18 +545,18 @@ mod tests {
         let k = 5;
 
         let disk_manager = DiskManager::new(db_name).await?;
-        let mut bpm = BufferPoolManager::new(buffer_pool_size, k, disk_manager).await?;
+        let bpm = BufferPoolManager::new(buffer_pool_size, k, disk_manager).await?;
 
         let page0 = bpm.new_page_ref().await?;
 
         // Scenario: The buffer pool is empty. We should be able to create a new page.
         assert!(page0.is_some());
         let page0 = page0.unwrap();
-        assert_eq!(0, page0.read().await.page_id());
+        assert_eq!(0, page0.page_id());
 
         // Scenario: Once we have a page, we should be able to read and write content.
         let data = "Hello".as_bytes();
-        page0.write().await.mut_data().write_all(data)?;
+        page0.data_write().await.as_mut().write_all(data)?;
 
         // Scenario: We should be able to create new pages until we fill up the buffer pool.
         let mut pages = Vec::new();
@@ -403,7 +565,7 @@ mod tests {
             assert!(page.is_some());
             let page = page.unwrap();
             {
-                let _page = page.write().await;
+                let _page = page.data_write().await;
             }
             pages.push(page);
         }
@@ -416,7 +578,7 @@ mod tests {
         // Scenario: After unpinning pages {0, 1, 2, 3, 4} and pinning another 4 new pages,
         // there would still be one buffer page left for reading page 0.
         {
-            let _page0 = page0.write().await;
+            let _page0 = page0.data_write().await;
         }
         drop(page0);
         for _ in 0..4 {
@@ -438,12 +600,12 @@ mod tests {
         let mut data = [0u8; PAGE_SIZE];
         let mut data_slice = &mut data[..];
         data_slice.write_all("Hello".as_bytes())?;
-        assert_eq!(page0.read().await.data(), data);
+        assert_eq!(page0.data_read().await.as_ref(), data);
 
         // Scenario: If we unpin page 0 and then make a new page, all the buffer pages should
         // now be pinned. Fetching page 0 again should fail.
         {
-            let _page0 = page0.write().await;
+            let _page0 = page0.data_write().await;
         }
         drop(page0);
         // wait until page unpin
