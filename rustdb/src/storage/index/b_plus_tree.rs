@@ -7,7 +7,7 @@ use crate::storage::page::b_plus_tree::{Header, Internal, Leaf, Node};
 use crate::storage::{AtomicPageId, PageId, RecordId};
 use indexmap::IndexMap;
 use std::collections::VecDeque;
-use std::fmt::{Debug, Display};
+use std::fmt::Debug;
 use std::ops::Range;
 use std::sync::atomic::Ordering;
 use tokio::io::AsyncWriteExt;
@@ -935,7 +935,7 @@ mod tests {
         let db_name = "test_insert.db";
         let disk_manager = DiskManager::new(db_name).await?;
         let buffer_pool_manager = BufferPoolManager::new(50, 2, disk_manager).await?;
-        let mut index = Index {
+        let index = Index {
             buffer_pool: buffer_pool_manager,
             root: RwLock::new(None),
             max_size: 4,
@@ -1075,7 +1075,7 @@ mod tests {
         let disk_manager = DiskManager::new(db_name).await?;
         let buffer_pool_manager = BufferPoolManager::new(50, 2, disk_manager).await?;
         let len = 60;
-        let mut index = Arc::new(Index {
+        let index = Arc::new(Index {
             buffer_pool: buffer_pool_manager,
             root: RwLock::new(None),
             max_size: 4,
