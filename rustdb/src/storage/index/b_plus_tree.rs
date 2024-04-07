@@ -1025,7 +1025,7 @@ mod tests {
         let db_name = "test_search_concurrency.db";
         let disk_manager = DiskManager::new(db_name).await?;
         let buffer_pool_manager = BufferPoolManager::new(50, 2, disk_manager).await?;
-        let len = 90;
+        let len = 100;
         let index = Arc::new(Index {
             buffer_pool: buffer_pool_manager,
             root: RwLock::new(None),
@@ -1074,7 +1074,7 @@ mod tests {
         let db_name = "test_insert_concurrency.db";
         let disk_manager = DiskManager::new(db_name).await?;
         let buffer_pool_manager = BufferPoolManager::new(50, 2, disk_manager).await?;
-        let len = 20;
+        let len = 60;
         let mut index = Arc::new(Index {
             buffer_pool: buffer_pool_manager,
             root: RwLock::new(None),

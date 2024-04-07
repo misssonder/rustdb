@@ -1,16 +1,17 @@
 pub mod b_plus_tree;
 
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use tokio::sync::RwLock;
 use crate::error::{RustDBError, RustDBResult};
 use crate::storage::codec::{Decoder, Encoder};
 use crate::storage::page::b_plus_tree::Node;
 use crate::storage::{PageId, PAGE_SIZE};
 
-#[derive(Clone)]
 pub struct Page {
     page_id: PageId,
     data: [u8; PAGE_SIZE],
-    pub pin_count: u32,
-    is_dirty: bool,
+    pub pin_count: AtomicU32,
+    is_dirty: AtomicBool,
 }
 
 impl Page {
@@ -18,8 +19,8 @@ impl Page {
         Self {
             page_id,
             data: [0; PAGE_SIZE],
-            pin_count: 0,
-            is_dirty: false,
+            pin_count: AtomicU32::new(0),
+            is_dirty: AtomicBool::new(false),
         }
     }
 
@@ -33,8 +34,8 @@ impl Page {
     pub fn reset(&mut self) {
         self.page_id = 0;
         self.data = [0; PAGE_SIZE];
-        self.pin_count = 0;
-        self.is_dirty = false;
+        self.pin_count = AtomicU32::new(0);
+        self.is_dirty =AtomicBool::new(false);
     }
 
     pub fn page_id(&self) -> PageId {
@@ -45,11 +46,11 @@ impl Page {
     }
 
     pub fn is_dirty(&self) -> bool {
-        self.is_dirty
+        self.is_dirty.load(Ordering::Relaxed)
     }
 
     pub fn set_dirty(&mut self, is_dirty: bool) {
-        self.is_dirty = is_dirty
+        self.is_dirty.store(is_dirty,Ordering::Relaxed);
     }
 
     pub fn node<K>(&self) -> RustDBResult<Node<K>>
