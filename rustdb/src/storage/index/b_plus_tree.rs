@@ -1,4 +1,4 @@
-use crate::buffer::buffer_poll_manager1::{
+use crate::buffer::buffer_poll_manager::{
     BufferPoolManager, NodeTrait, OwnedPageDataReadGuard, OwnedPageDataWriteGuard, PageRef,
 };
 use crate::error::{RustDBError, RustDBResult};
@@ -22,7 +22,7 @@ pub struct Index {
 impl Index {
     pub async fn search<K>(&self, key: &K) -> RustDBResult<Option<RecordId>>
     where
-        K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord + Debug,
+        K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord,
     {
         let mut route = Route::new(RouteOption::default());
         if let Some(page_id) = self.find_route(key, &mut route).await? {
@@ -111,12 +111,7 @@ impl Index {
 
     pub async fn insert<K>(&self, key: K, value: RecordId) -> RustDBResult<()>
     where
-        K: Decoder<Error = RustDBError>
-            + Encoder<Error = RustDBError>
-            + Ord
-            + Default
-            + Clone
-            + Debug,
+        K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord + Default + Clone,
     {
         let option = RouteOption::default()
             .with_internal(true)
@@ -126,7 +121,6 @@ impl Index {
         if let Some(page_id) = self.find_route(&key, &mut route).await? {
             return self.insert_inner(page_id, route, key, value).await;
         } else {
-            println!("init tree");
             self.init_tree(key, value).await?;
         };
         Ok(())
@@ -588,26 +582,18 @@ impl Index {
     /// if current node is unsafe, then take parent latch
     async fn find_route<K>(&self, key: &K, route: &mut Route) -> RustDBResult<Option<PageId>>
     where
-        K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord + Debug,
+        K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord,
     {
         if let Some(page_id) = self.root.read().await.as_ref() {
             let mut page_id = page_id.load(Ordering::Relaxed);
             let mut parent_index = 0;
             loop {
-                println!(
-                    "key {:?} already get route: {:?} try to get: {:?}",
-                    key,
-                    route.nodes.keys().collect::<Vec<_>>(),
-                    page_id
-                );
                 let page = self
                     .buffer_pool
                     .fetch_page_ref(page_id)
                     .await?
                     .ok_or(RustDBError::BufferPool("Can't fetch page".into()))?;
-                println!("key {:?} try to get {}", key, page_id);
                 let read_guard = page.data_read().await;
-                println!("key {:?} already get {}", key, read_guard.page_id());
                 let node = read_guard.node::<K>()?;
                 if let Some(parent_id) = node.parent() {
                     match route.option.action {
@@ -1085,61 +1071,61 @@ mod tests {
         tokio::fs::remove_file(db_name).await?;
         Ok(())
     }
-    // #[tokio::test]
-    // async fn test_insert_concurrency() -> RustDBResult<()> {
-    //     let db_name = "test_insert_concurrency.db";
-    //     let disk_manager = DiskManager::new(db_name).await?;
-    //     let buffer_pool_manager = BufferPoolManager::new(50, 2, disk_manager).await?;
-    //     let len = 60;
-    //     let index = Arc::new(Index {
-    //         buffer_pool: buffer_pool_manager,
-    //         root: RwLock::new(None),
-    //         max_size: 4,
-    //     });
-    //     let index_clone = index.clone();
-    //     let task1 = tokio::spawn(async move {
-    //         for i in 1..len / 2 {
-    //             index_clone
-    //                 .insert(
-    //                     i as u32,
-    //                     RecordId {
-    //                         page_id: i,
-    //                         slot_num: 0,
-    //                     },
-    //                 )
-    //                 .await?;
-    //             println!("task1 insert {}", i);
-    //         }
-    //         Ok::<_, RustDBError>(())
-    //     });
-    //     let index_clone = index.clone();
-    //     let task2 = tokio::spawn(async move {
-    //         for i in len / 2..len {
-    //             index_clone
-    //                 .insert(
-    //                     i as u32,
-    //                     RecordId {
-    //                         page_id: i,
-    //                         slot_num: 0,
-    //                     },
-    //                 )
-    //                 .await?;
-    //             println!("task2 insert {}", i);
-    //         }
-    //         Ok::<_, RustDBError>(())
-    //     });
-    //     task1.await.unwrap()?;
-    //     task2.await.unwrap()?;
-    //     index.print::<u32>().await?;
-    //
-    //     for i in 1..len {
-    //         let val = index.search(&(i as u32)).await?;
-    //         println!("get {} val: {:?}", i, val);
-    //         assert!(val.is_some());
-    //         assert_eq!(i as u32, val.unwrap().page_id as u32);
-    //     }
-    //     assert!(index.search(&(len as u32 + 1)).await?.is_none());
-    //     tokio::fs::remove_file(db_name).await?;
-    //     Ok(())
-    // }
+    #[tokio::test]
+    async fn test_insert_concurrency() -> RustDBResult<()> {
+        let db_name = "test_insert_concurrency.db";
+        let disk_manager = DiskManager::new(db_name).await?;
+        let buffer_pool_manager = BufferPoolManager::new(50, 2, disk_manager).await?;
+        let len = 100;
+        let index = Arc::new(Index {
+            buffer_pool: buffer_pool_manager,
+            root: RwLock::new(None),
+            max_size: 4,
+        });
+        let index_clone = index.clone();
+        let task1 = tokio::spawn(async move {
+            for i in 1..len / 2 {
+                index_clone
+                    .insert(
+                        i as u32,
+                        RecordId {
+                            page_id: i,
+                            slot_num: 0,
+                        },
+                    )
+                    .await?;
+                println!("task1 insert {}", i);
+            }
+            Ok::<_, RustDBError>(())
+        });
+        let index_clone = index.clone();
+        let task2 = tokio::spawn(async move {
+            for i in len / 2..len {
+                index_clone
+                    .insert(
+                        i as u32,
+                        RecordId {
+                            page_id: i,
+                            slot_num: 0,
+                        },
+                    )
+                    .await?;
+                println!("task2 insert {}", i);
+            }
+            Ok::<_, RustDBError>(())
+        });
+        task1.await.unwrap()?;
+        task2.await.unwrap()?;
+        index.print::<u32>().await?;
+
+        for i in 1..len {
+            let val = index.search(&(i as u32)).await?;
+            println!("get {} val: {:?}", i, val);
+            assert!(val.is_some());
+            assert_eq!(i as u32, val.unwrap().page_id as u32);
+        }
+        assert!(index.search(&(len as u32 + 1)).await?.is_none());
+        tokio::fs::remove_file(db_name).await?;
+        Ok(())
+    }
 }
