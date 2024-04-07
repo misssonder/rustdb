@@ -270,6 +270,30 @@ impl BufferPoolManager {
         Ok(page)
     }
 }
+pub trait NodeTrait {
+    fn node<K>(&self) -> RustDBResult<Node<K>>
+    where
+        K: Decoder<Error = RustDBError>;
+    fn write_back<K>(&mut self, node: &Node<K>) -> RustDBResult<()>
+    where
+        K: Encoder<Error = RustDBError>;
+}
+
+impl NodeTrait for [u8; PAGE_SIZE] {
+    fn node<K>(&self) -> RustDBResult<Node<K>>
+    where
+        K: Decoder<Error = RustDBError>,
+    {
+        Node::decode(&mut self.as_ref())
+    }
+
+    fn write_back<K>(&mut self, node: &Node<K>) -> RustDBResult<()>
+    where
+        K: Encoder<Error = RustDBError>,
+    {
+        node.encode(&mut self.as_mut())
+    }
+}
 pub struct PageRef {
     page: Arc<Page1>,
     frame_id: FrameId,
@@ -278,11 +302,13 @@ pub struct PageRef {
 
 pub struct PageDataWriteGuard<'a> {
     guard: RwLockWriteGuard<'a, [u8; PAGE_SIZE]>,
+    page_id: PageId,
     is_dirty: &'a AtomicBool,
 }
 
 pub struct PageDataReadGuard<'a> {
     guard: RwLockReadGuard<'a, [u8; PAGE_SIZE]>,
+    page_id: PageId,
 }
 
 pub struct OwnedPageDataWriteGuard {
@@ -293,6 +319,30 @@ pub struct OwnedPageDataWriteGuard {
 pub struct OwnedPageDataReadGuard {
     guard: OwnedRwLockReadGuard<[u8; PAGE_SIZE]>,
     page_ref: PageRef,
+}
+
+impl PageDataWriteGuard<'_> {
+    pub fn page_id(&self) -> PageId {
+        self.page_id
+    }
+}
+
+impl PageDataReadGuard<'_> {
+    pub fn page_id(&self) -> PageId {
+        self.page_id
+    }
+}
+
+impl OwnedPageDataWriteGuard {
+    pub fn page_id(&self) -> PageId {
+        self.page_ref.page_id()
+    }
+}
+
+impl OwnedPageDataReadGuard {
+    pub fn page_id(&self) -> PageId {
+        self.page_ref.page_id()
+    }
 }
 
 impl Drop for PageRef {
@@ -381,13 +431,17 @@ impl PageRef {
         let guard = self.page.data_ref().write().await;
         PageDataWriteGuard {
             guard,
+            page_id: self.page.page_id(),
             is_dirty: &self.page.is_dirty,
         }
     }
 
     pub async fn data_read(&self) -> PageDataReadGuard<'_> {
         let guard = self.page.data_ref().read().await;
-        PageDataReadGuard { guard }
+        PageDataReadGuard {
+            guard,
+            page_id: self.page_id(),
+        }
     }
 
     pub async fn data_write_owned(self) -> OwnedPageDataWriteGuard {
