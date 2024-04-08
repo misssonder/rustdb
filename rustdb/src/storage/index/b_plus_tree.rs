@@ -113,10 +113,7 @@ impl Index {
     where
         K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord + Default + Clone,
     {
-        let option = RouteOption::default()
-            .with_internal(true)
-            .with_leaf(true)
-            .with_action(RouteAction::Insert);
+        let option = RouteOption::default().with_action(RouteAction::Insert);
         let mut route = Route::new(option);
         if let Some(page_id) = self.find_route(&key, &mut route).await? {
             return self.insert_inner(page_id, route, key, value).await;
@@ -593,8 +590,18 @@ impl Index {
                     .fetch_page_ref(page_id)
                     .await?
                     .ok_or(RustDBError::BufferPool("Can't fetch page".into()))?;
-                let read_guard = page.data_read().await;
-                let node = read_guard.node::<K>()?;
+                let (latch, node) = match route.option.action {
+                    RouteAction::Search => {
+                        let read_guard = page.data_read_owned().await;
+                        let node = read_guard.node::<K>()?;
+                        (Latch::Read(read_guard), node)
+                    }
+                    RouteAction::Insert | RouteAction::Delete => {
+                        let write_guard = page.data_write_owned().await;
+                        let node = write_guard.node::<K>()?;
+                        (Latch::Write(write_guard), node)
+                    }
+                };
                 if let Some(parent_id) = node.parent() {
                     match route.option.action {
                         RouteAction::Search => {
@@ -615,30 +622,14 @@ impl Index {
                 match node {
                     Node::Internal(ref internal) => {
                         let (index, child_id) = internal.search(key);
-                        drop(read_guard);
-                        let latch = if route.option.internal_latch_write {
-                            let write_guard = page.data_write_owned().await;
-                            Latch::Write(write_guard)
-                        } else {
-                            let read_guard = page.data_read_owned().await;
-                            Latch::Read(read_guard)
-                        };
                         let node = RouteNode::new(latch, parent_index);
                         route.nodes.insert(page_id, node);
                         parent_index = index;
                         page_id = child_id;
                     }
                     Node::Leaf(_) => {
-                        drop(read_guard);
-                        if route.option.leaf_latch_write {
-                            let write_guard = page.data_write_owned().await;
-                            let node = RouteNode::new(Latch::Write(write_guard), parent_index);
-                            route.nodes.insert(page_id, node);
-                        } else {
-                            let read_guard = page.data_read_owned().await;
-                            let node = RouteNode::new(Latch::Read(read_guard), parent_index);
-                            route.nodes.insert(page_id, node);
-                        }
+                        let node = RouteNode::new(latch, parent_index);
+                        route.nodes.insert(page_id, node);
                         return Ok(Some(page_id));
                     }
                 }
@@ -767,32 +758,18 @@ enum RouteAction {
 }
 
 struct RouteOption {
-    internal_latch_write: bool,
-    leaf_latch_write: bool,
     action: RouteAction,
 }
 
 impl Default for RouteOption {
     fn default() -> Self {
         Self {
-            internal_latch_write: false,
-            leaf_latch_write: false,
             action: RouteAction::Search,
         }
     }
 }
 
 impl RouteOption {
-    fn with_internal(mut self, write: bool) -> Self {
-        self.internal_latch_write = write;
-        self
-    }
-
-    fn with_leaf(mut self, write: bool) -> Self {
-        self.leaf_latch_write = write;
-        self
-    }
-
     fn with_action(mut self, action: RouteAction) -> Self {
         self.action = action;
         self
