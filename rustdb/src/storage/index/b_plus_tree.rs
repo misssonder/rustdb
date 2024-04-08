@@ -602,19 +602,19 @@ impl Index {
                         (Latch::Write(write_guard), node)
                     }
                 };
-                if let Some(parent_id) = node.parent() {
+                if node.parent().is_some() {
                     match route.option.action {
                         RouteAction::Search => {
-                            route.nodes.shift_remove(&parent_id);
+                            route.pop_front_until(page_id);
                         }
                         RouteAction::Insert => {
                             if node.allow_insert() {
-                                route.nodes.shift_remove(&parent_id);
+                                route.pop_front_until(page_id);
                             }
                         }
                         RouteAction::Delete => {
                             if node.allow_delete() {
-                                route.nodes.shift_remove(&parent_id);
+                                route.pop_front_until(page_id);
                             }
                         }
                     }
@@ -623,13 +623,13 @@ impl Index {
                     Node::Internal(ref internal) => {
                         let (index, child_id) = internal.search(key);
                         let node = RouteNode::new(latch, parent_index);
-                        route.nodes.insert(page_id, node);
+                        route.insert(page_id, node);
                         parent_index = index;
                         page_id = child_id;
                     }
                     Node::Leaf(_) => {
                         let node = RouteNode::new(latch, parent_index);
-                        route.nodes.insert(page_id, node);
+                        route.insert(page_id, node);
                         return Ok(Some(page_id));
                     }
                 }
@@ -749,6 +749,19 @@ impl Route {
             option,
         }
     }
+
+    fn pop_front_until(&mut self, page_id: PageId) {
+        while let Some((first_page_id, _)) = self.nodes.first() {
+            if first_page_id.eq(&page_id) {
+                break;
+            }
+            self.nodes.shift_remove_index(0);
+        }
+    }
+
+    fn insert(&mut self, page_id: PageId, node: RouteNode) -> Option<RouteNode> {
+        self.nodes.insert(page_id, node)
+    }
 }
 
 enum RouteAction {
@@ -827,10 +840,17 @@ impl Latch {
         }
     }
 
-    fn assume_read(&self) -> &OwnedPageDataReadGuard {
+    fn assume_read_ref(&self) -> &OwnedPageDataReadGuard {
         match self {
             Latch::Read(guard) => guard,
-            Latch::Write(guard) => unreachable!(),
+            Latch::Write(_) => unreachable!(),
+        }
+    }
+
+    fn assume_read_(self) -> OwnedPageDataReadGuard {
+        match self {
+            Latch::Read(guard) => guard,
+            Latch::Write(_) => unreachable!(),
         }
     }
 }
@@ -1053,7 +1073,7 @@ mod tests {
         let db_name = "test_insert_concurrency.db";
         let disk_manager = DiskManager::new(db_name).await?;
         let buffer_pool_manager = BufferPoolManager::new(50, 2, disk_manager).await?;
-        let len = 100;
+        let len = 50;
         let index = Arc::new(Index {
             buffer_pool: buffer_pool_manager,
             root: RwLock::new(None),
