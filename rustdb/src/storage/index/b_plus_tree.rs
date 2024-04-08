@@ -8,9 +8,9 @@ use crate::storage::{PageId, RecordId};
 use indexmap::IndexMap;
 use std::collections::VecDeque;
 use std::fmt::Debug;
-use std::ops::Range;
+use std::ops::{Deref, Range};
 use tokio::io::AsyncWriteExt;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 pub struct Index {
     buffer_pool: BufferPoolManager,
@@ -18,7 +18,7 @@ pub struct Index {
     max_size: usize,
 }
 
-impl Index {
+impl<'a> Index {
     pub async fn new<K>(buffer_pool: BufferPoolManager, max_size: usize) -> RustDBResult<Self>
     where
         K: Encoder<Error = RustDBError>,
@@ -149,7 +149,7 @@ impl Index {
     pub async fn insert_inner<K>(
         &self,
         mut page_id: PageId,
-        mut route: Route,
+        mut route: Route<'_>,
         key: K,
         value: RecordId,
     ) -> RustDBResult<()>
@@ -229,7 +229,10 @@ impl Index {
                     .new_page_write_owned(&mut parent_node)
                     .await?;
                 let parent_id = parent_node.page_id();
-                *self.root.write().await = parent_node.page_id();
+                if let Some(root_latch) = route.root_latch.take() {
+                    let mut root_latch = root_latch.assume_write();
+                    *root_latch = parent_node.page_id();
+                }
                 node.set_parent(parent_node.page_id());
                 sibling.set_parent(parent_node.page_id());
 
@@ -576,13 +579,23 @@ impl Index {
     /// take latches according to latch crabbin
     /// if current node is safe, then release parent latch
     /// if current node is unsafe, then take parent latch
-    async fn find_route<K>(&self, key: &K, route: &mut Route) -> RustDBResult<PageId>
+    async fn find_route<K>(&'a self, key: &K, route: &mut Route<'a>) -> RustDBResult<PageId>
     where
         K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord,
     {
-        let page_id = self.root.read().await;
-        let mut page_id = *page_id;
+        let root_latch = match route.option.action {
+            RouteAction::Search => {
+                let root_guard = self.root.read().await;
+                RootLatch::Read(root_guard)
+            }
+            RouteAction::Insert | RouteAction::Delete => {
+                let root_guard = self.root.write().await;
+                RootLatch::Write(root_guard)
+            }
+        };
+        let mut page_id = *root_latch;
         let mut parent_index = 0;
+        let _ = route.root_latch.insert(root_latch);
         loop {
             let page = self
                 .buffer_pool
@@ -702,15 +715,17 @@ impl Index {
     }
 }
 
-struct Route {
+struct Route<'a> {
     nodes: IndexMap<PageId, RouteNode>,
+    root_latch: Option<RootLatch<'a>>,
     option: RouteOption,
 }
 
-impl Route {
+impl Route<'_> {
     fn new(option: RouteOption) -> Self {
         Self {
             nodes: Default::default(),
+            root_latch: None,
             option,
         }
     }
@@ -720,6 +735,7 @@ impl Route {
             if first_page_id.eq(&page_id) {
                 break;
             }
+            self.root_latch.take();
             self.nodes.shift_remove_index(0);
         }
     }
@@ -816,6 +832,31 @@ impl Latch {
         match self {
             Latch::Read(guard) => guard,
             Latch::Write(_) => unreachable!(),
+        }
+    }
+}
+
+enum RootLatch<'a> {
+    Read(RwLockReadGuard<'a, PageId>),
+    Write(RwLockWriteGuard<'a, PageId>),
+}
+
+impl Deref for RootLatch<'_> {
+    type Target = PageId;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            RootLatch::Read(guard) => guard.deref(),
+            RootLatch::Write(guard) => guard.deref(),
+        }
+    }
+}
+
+impl<'a> RootLatch<'a> {
+    fn assume_write(self) -> RwLockWriteGuard<'a, PageId> {
+        match self {
+            RootLatch::Read(_) => unreachable!(),
+            RootLatch::Write(guard) => guard,
         }
     }
 }
@@ -976,7 +1017,7 @@ mod tests {
         let db_name = "test_search_concurrency.db";
         let disk_manager = DiskManager::new(db_name).await?;
         let buffer_pool_manager = BufferPoolManager::new(50, 2, disk_manager).await?;
-        let len = 100;
+        let len = 1000;
         let index = Arc::new(Index::new::<u32>(buffer_pool_manager, 4).await?);
         for i in 1..len {
             index
@@ -1020,48 +1061,39 @@ mod tests {
     async fn test_insert_concurrency() -> RustDBResult<()> {
         let db_name = "test_insert_concurrency.db";
         let disk_manager = DiskManager::new(db_name).await?;
-        let buffer_pool_manager = BufferPoolManager::new(50, 2, disk_manager).await?;
-        let len = 50;
-        let index = Arc::new(Index::new::<u32>(buffer_pool_manager, 4).await?);
-        let index_clone = index.clone();
-        let task1 = tokio::spawn(async move {
-            for i in 1..len / 2 {
-                index_clone
-                    .insert(
-                        i as u32,
-                        RecordId {
-                            page_id: i,
-                            slot_num: 0,
-                        },
-                    )
-                    .await?;
-                println!("task1 insert {}", i);
-            }
-            Ok::<_, RustDBError>(())
-        });
-        let index_clone = index.clone();
-        let task2 = tokio::spawn(async move {
-            for i in len / 2..len {
-                index_clone
-                    .insert(
-                        i as u32,
-                        RecordId {
-                            page_id: i,
-                            slot_num: 0,
-                        },
-                    )
-                    .await?;
-                println!("task2 insert {}", i);
-            }
-            Ok::<_, RustDBError>(())
-        });
-        task1.await.unwrap()?;
-        task2.await.unwrap()?;
+        let buffer_pool_manager = BufferPoolManager::new(500, 2, disk_manager).await?;
+        let len = 10000;
+        let concurrency = 10;
+        let index = Arc::new(Index::new::<u32>(buffer_pool_manager, 50).await?);
+        let mut tasks = Vec::with_capacity(concurrency);
+        let limit = len / concurrency;
+        for i in 0..concurrency {
+            let start = i * limit;
+            let end = start + limit;
+            let index_clone = index.clone();
+            let task = tokio::spawn(async move {
+                for i in start..end {
+                    index_clone
+                        .insert(
+                            i as u32,
+                            RecordId {
+                                page_id: i,
+                                slot_num: 0,
+                            },
+                        )
+                        .await?;
+                }
+                Ok::<_, RustDBError>(())
+            });
+            tasks.push(task);
+        }
+        for task in tasks {
+            task.await.unwrap()?;
+        }
         index.print::<u32>().await?;
 
-        for i in 1..len {
+        for i in 0..len {
             let val = index.search(&(i as u32)).await?;
-            println!("get {} val: {:?}", i, val);
             assert!(val.is_some());
             assert_eq!(i as u32, val.unwrap().page_id as u32);
         }
