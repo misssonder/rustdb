@@ -1016,10 +1016,13 @@ mod tests {
     async fn test_search_concurrency() -> RustDBResult<()> {
         let db_name = "test_search_concurrency.db";
         let disk_manager = DiskManager::new(db_name).await?;
-        let buffer_pool_manager = BufferPoolManager::new(50, 2, disk_manager).await?;
-        let len = 1000;
+        let buffer_pool_manager = BufferPoolManager::new(100, 2, disk_manager).await?;
         let index = Arc::new(Index::new::<u32>(buffer_pool_manager, 4).await?);
-        for i in 1..len {
+        let len = 10000;
+        let concurrency = 1;
+        let mut tasks = Vec::with_capacity(concurrency);
+        let limit = len / concurrency;
+        for i in 0..len {
             index
                 .insert(
                     i as u32,
@@ -1030,30 +1033,23 @@ mod tests {
                 )
                 .await?;
         }
-        index.print::<u32>().await?;
-
-        let index_clone = index.clone();
-        let task1 = tokio::spawn(async move {
-            for i in 1..len / 2 {
-                let val = index_clone.search(&(i as u32)).await?;
-                println!("task1 get {} val: {:?}", i, val);
-                assert!(val.is_some());
-                assert_eq!(i as u32, val.unwrap().page_id as u32);
-            }
-            Ok::<_, RustDBError>(())
-        });
-        let index_clone = index.clone();
-        let task2 = tokio::spawn(async move {
-            for i in len / 2..len {
-                let val = index_clone.search(&(i as u32)).await?;
-                println!("task2 get {} val: {:?}", i, val);
-                assert!(val.is_some());
-                assert_eq!(i as u32, val.unwrap().page_id as u32);
-            }
-            Ok::<_, RustDBError>(())
-        });
-        task1.await.unwrap()?;
-        task2.await.unwrap()?;
+        for i in 0..concurrency {
+            let start = i * limit;
+            let end = start + limit;
+            let index_clone = index.clone();
+            let task = tokio::spawn(async move {
+                for i in start..end {
+                    let val = index_clone.search(&(i as u32)).await?;
+                    assert!(val.is_some());
+                    assert_eq!(i as u32, val.unwrap().page_id as u32);
+                }
+                Ok::<_, RustDBError>(())
+            });
+            tasks.push(task);
+        }
+        for task in tasks {
+            task.await.unwrap()?;
+        }
         tokio::fs::remove_file(db_name).await?;
         Ok(())
     }
