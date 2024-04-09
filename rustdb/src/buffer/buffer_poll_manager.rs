@@ -464,7 +464,6 @@ impl PageRef {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::PAGE_SIZE;
     use std::io::Write;
     use std::time::Duration;
 

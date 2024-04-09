@@ -47,7 +47,9 @@ impl<'a> Index {
         K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord,
     {
         let mut route = Route::new(RouteOption::default());
-        let page_id = self.find_route(key, &mut route).await?;
+        let page_id = self
+            .find_route(KeyCondition::Equal(key), &mut route)
+            .await?;
         match route.nodes.get(&page_id).unwrap().latch {
             Latch::Read(ref guard) => {
                 let leaf = guard.node::<K>()?.assume_leaf();
@@ -134,7 +136,9 @@ impl<'a> Index {
     {
         let option = RouteOption::default().with_action(RouteAction::Insert);
         let mut route = Route::new(option);
-        let page_id = self.find_route(&key, &mut route).await?;
+        let page_id = self
+            .find_route(KeyCondition::Equal(&key), &mut route)
+            .await?;
         self.insert_inner(page_id, route, key, value).await
     }
 
@@ -144,7 +148,9 @@ impl<'a> Index {
     {
         let option = RouteOption::default().with_action(RouteAction::Delete);
         let mut route = Route::new(option);
-        let page_id = self.find_route(key, &mut route).await?;
+        let page_id = self
+            .find_route(KeyCondition::Equal(key), &mut route)
+            .await?;
         self.delete_inner(page_id, route, key).await
     }
 
@@ -554,7 +560,11 @@ impl<'a> Index {
     /// take latches according to latch crabbin
     /// if current node is safe, then release parent latch
     /// if current node is unsafe, then take parent latch
-    async fn find_route<K>(&'a self, key: &K, route: &mut Route<'a>) -> RustDBResult<PageId>
+    async fn find_route<K>(
+        &'a self,
+        key: KeyCondition<&K>,
+        route: &mut Route<'a>,
+    ) -> RustDBResult<PageId>
     where
         K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord,
     {
@@ -608,7 +618,13 @@ impl<'a> Index {
             }
             match node {
                 Node::Internal(ref internal) => {
-                    let (index, child_id) = internal.search(key);
+                    let (index, child_id) = match key {
+                        KeyCondition::Min => (0, internal.kv[0].1),
+                        KeyCondition::Max => {
+                            (internal.kv.len() - 1, internal.kv[internal.kv.len() - 1].1)
+                        }
+                        KeyCondition::Equal(key) => internal.search(key),
+                    };
                     let node = RouteNode::new(latch, parent_index);
                     route.insert(page_id, node);
                     parent_index = index;
@@ -622,6 +638,7 @@ impl<'a> Index {
             }
         }
     }
+
     async fn find_leaf<K>(&mut self, key: &K) -> RustDBResult<Node<K>>
     where
         K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord,
@@ -688,6 +705,12 @@ impl<'a> Index {
 
         Ok(())
     }
+}
+
+enum KeyCondition<K> {
+    Min,
+    Max,
+    Equal(K),
 }
 
 struct Route<'a> {
@@ -842,6 +865,45 @@ mod tests {
     use crate::storage::disk::disk_manager::DiskManager;
     use std::sync::Arc;
 
+    #[tokio::test]
+    async fn test_find_route() -> RustDBResult<()> {
+        let db_name = "test_find_route.db";
+        let disk_manager = DiskManager::new(db_name).await?;
+        let buffer_pool_manager = BufferPoolManager::new(50, 2, disk_manager).await?;
+        let index = Index::new::<u32>(buffer_pool_manager, 100).await?;
+        let len = 10000;
+        for i in (0..10000).rev() {
+            index
+                .insert(
+                    i as u32,
+                    RecordId {
+                        page_id: i,
+                        slot_num: 0,
+                    },
+                )
+                .await?;
+        }
+        let page_id = index
+            .find_route(
+                KeyCondition::<&u32>::Min,
+                &mut Route::new(RouteOption::default()),
+            )
+            .await?;
+        let (_, node) = index.buffer_pool.fetch_page_node::<u32>(page_id).await?;
+        let node = node.assume_leaf();
+        assert_eq!(node.kv[0].0, 0);
+        let page_id = index
+            .find_route(
+                KeyCondition::<&u32>::Max,
+                &mut Route::new(RouteOption::default()),
+            )
+            .await?;
+        let (_, node) = index.buffer_pool.fetch_page_node::<u32>(page_id).await?;
+        let node = node.assume_leaf();
+        assert_eq!(node.kv[node.kv.len() - 1].0, len - 1);
+        tokio::fs::remove_file(db_name).await?;
+        Ok(())
+    }
     #[tokio::test]
     async fn test_search_range() -> RustDBResult<()> {
         let db_name = "test_search_range.db";
