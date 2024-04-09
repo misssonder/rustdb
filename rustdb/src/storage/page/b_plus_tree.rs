@@ -547,7 +547,7 @@ impl<K> Leaf<K> {
     }
 
     pub fn allow_delete(&self) -> bool {
-        self.parent().is_none() || self.header.size > self.header.max_size / 2
+        self.header.size > self.header.max_size / 2
     }
 
     pub fn max_size(&self) -> usize {

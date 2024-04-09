@@ -4,8 +4,8 @@ RustDB is the rust implementation of [bustub](https://github.com/cmu-db/bustub),
 - [x] Buffer Poll
   - [x] Evict Policy 
   - [x] Page lifetime manage 
-- [ ] BPlus Tree
+- [X] BPlus Tree
   - [x] Search
   - [x] Insert
   - [x] Delete
-  - [ ] Concurrency
+  - [X] Concurrency
