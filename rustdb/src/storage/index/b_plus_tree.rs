@@ -138,12 +138,14 @@ impl<'a> Index {
         self.insert_inner(page_id, route, key, value).await
     }
 
-    pub async fn delete<K>(&mut self, key: &K) -> RustDBResult<Option<(K, RecordId)>>
+    pub async fn delete<K>(&self, key: &K) -> RustDBResult<Option<(K, RecordId)>>
     where
         K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord + Clone + Default,
     {
-        let page = self.find_page_leaf(key).await?;
-        self.delete_inner(page, key).await
+        let option = RouteOption::default().with_action(RouteAction::Delete);
+        let mut route = Route::new(option);
+        let page_id = self.find_route(key, &mut route).await?;
+        self.delete_inner(page_id, route, key).await
     }
 
     pub async fn insert_inner<K>(
@@ -248,8 +250,9 @@ impl<'a> Index {
     }
 
     pub async fn delete_inner<K>(
-        &mut self,
-        mut page: PageRef,
+        &self,
+        mut page_id: PageId,
+        mut route: Route<'_>,
         key: &K,
     ) -> RustDBResult<Option<(K, RecordId)>>
     where
@@ -257,7 +260,9 @@ impl<'a> Index {
     {
         let mut res = None;
         loop {
-            let mut node = page.data_read().await.node::<K>()?;
+            let route_node = route.nodes.shift_remove(&page_id).unwrap();
+            let mut latch = route_node.latch.assume_write();
+            let mut node: Node<K> = latch.node()?;
             match node {
                 Node::Internal(ref mut _internal) => {}
                 Node::Leaf(ref mut leaf) => {
@@ -267,25 +272,38 @@ impl<'a> Index {
                     };
                 }
             }
+            latch.write_back(&node)?;
             if !node.is_underflow() {
-                page.data_write().await.write_back(&node)?;
                 break;
             }
             match node.parent() {
                 None => break,
                 Some(parent_id) => {
-                    let (parent_page, parent) =
-                        self.buffer_pool.fetch_page_node::<K>(parent_id).await?;
-                    let parent = parent.assume_internal();
-                    let (index, _) = parent.search(key);
-                    if self.steal::<K>(&parent_page, &page, index).await?.is_some() {
+                    let parent_latch = route
+                        .nodes
+                        .get_mut(&parent_id)
+                        .unwrap()
+                        .latch
+                        .assume_write_mut();
+                    if self
+                        .steal::<K>(parent_latch, &mut latch, route_node.parent_index)
+                        .await?
+                        .is_some()
+                    {
                         break;
                     }
-                    if self.merge::<K>(&parent_page, page, index).await? {
+                    if self
+                        .merge::<K>(
+                            parent_latch,
+                            latch,
+                            &mut route.root_latch,
+                            route_node.parent_index,
+                        )
+                        .await?
+                    {
                         break;
                     };
-
-                    page = parent_page;
+                    page_id = parent_id;
                 }
             }
         }
@@ -293,16 +311,16 @@ impl<'a> Index {
     }
 
     pub async fn steal<K>(
-        &mut self,
-        parent_page: &PageRef,
-        page: &PageRef,
+        &self,
+        parent_latch: &mut OwnedPageDataWriteGuard,
+        latch: &mut OwnedPageDataWriteGuard,
         index: usize,
     ) -> RustDBResult<Option<()>>
     where
         K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord + Default + Clone,
     {
-        let mut parent: Internal<K> = parent_page.data_read().await.node()?.assume_internal();
-        let node: Node<K> = page.data_read().await.node()?;
+        let mut parent: Internal<K> = parent_latch.node()?.assume_internal();
+        let node: Node<K> = latch.node()?;
         //steal from left
         let prev = match index > 0 {
             true => Some(index - 1),
@@ -333,13 +351,8 @@ impl<'a> Index {
                             .data_write()
                             .await
                             .write_back(&Node::Internal(prev_node))?;
-                        page.data_write()
-                            .await
-                            .write_back(&Node::Internal(internal))?;
-                        parent_page
-                            .data_write()
-                            .await
-                            .write_back(&Node::Internal(parent))?;
+                        latch.write_back(&Node::Internal(internal))?;
+                        parent_latch.write_back(&Node::Internal(parent))?;
                         return Ok(Some(()));
                     }
                 }
@@ -362,13 +375,8 @@ impl<'a> Index {
                             .data_write()
                             .await
                             .write_back(&Node::Internal(next_node))?;
-                        page.data_write()
-                            .await
-                            .write_back(&Node::Internal(internal))?;
-                        parent_page
-                            .data_write()
-                            .await
-                            .write_back(&Node::Internal(parent))?;
+                        latch.write_back(&Node::Internal(internal))?;
+                        parent_latch.write_back(&Node::Internal(parent))?;
                         return Ok(Some(()));
                     }
                 }
@@ -388,11 +396,8 @@ impl<'a> Index {
                             .data_write()
                             .await
                             .write_back(&Node::Leaf(prev_node))?;
-                        page.data_write().await.write_back(&Node::Leaf(leaf))?;
-                        parent_page
-                            .data_write()
-                            .await
-                            .write_back(&Node::Internal(parent))?;
+                        latch.write_back(&Node::Leaf(leaf))?;
+                        parent_latch.write_back(&Node::Internal(parent))?;
                         return Ok(Some(()));
                     }
                 }
@@ -411,11 +416,8 @@ impl<'a> Index {
                             .data_write()
                             .await
                             .write_back(&Node::Leaf(next_node))?;
-                        page.data_write().await.write_back(&Node::Leaf(leaf))?;
-                        parent_page
-                            .data_write()
-                            .await
-                            .write_back(&Node::Internal(parent))?;
+                        latch.write_back(&Node::Leaf(leaf))?;
+                        parent_latch.write_back(&Node::Internal(parent))?;
                         return Ok(Some(()));
                     }
                 }
@@ -428,16 +430,17 @@ impl<'a> Index {
     /// merge this node and it's prev node or next node
     /// return true if the node which been merged become the root
     pub async fn merge<K>(
-        &mut self,
-        parent_page: &PageRef,
-        page: PageRef,
+        &self,
+        parent_latch: &mut OwnedPageDataWriteGuard,
+        latch: OwnedPageDataWriteGuard,
+        root_latch: &mut Option<RootLatch<'a>>,
         index: usize,
     ) -> RustDBResult<bool>
     where
         K: Encoder<Error = RustDBError> + Decoder<Error = RustDBError> + Clone + Ord,
     {
-        let mut parent: Internal<K> = parent_page.data_read().await.node()?.assume_internal();
-        let node: Node<K> = page.data_read().await.node()?;
+        let mut parent: Internal<K> = parent_latch.node()?.assume_internal();
+        let node: Node<K> = latch.node()?;
         let prev = match index > 0 {
             true => Some(index - 1),
             false => None,
@@ -448,19 +451,17 @@ impl<'a> Index {
         };
         match node {
             Node::Internal(internal) => {
-                let (left_page, mut left_node, right_page, mut right_node, right_index) = {
+                let (mut left_latch, mut left_node, mut right_latch, mut right_node, right_index) = {
                     if let Some(prev_index) = prev {
                         let prev_id = parent.kv[prev_index].1;
-                        let (prev_page, prev_node) =
-                            self.buffer_pool.fetch_page_node(prev_id).await?;
-                        let prev_node = prev_node.assume_internal();
-                        (prev_page, prev_node, page, internal, index)
+                        let prev_latch = self.buffer_pool.fetch_page_write_owned(prev_id).await?;
+                        let prev_node = prev_latch.node()?.assume_internal();
+                        (prev_latch, prev_node, latch, internal, index)
                     } else if let Some(next_index) = next {
                         let next_id = parent.kv[next_index].1;
-                        let (next_page, next_node) =
-                            self.buffer_pool.fetch_page_node(next_id).await?;
-                        let next_node = next_node.assume_internal();
-                        (page, internal, next_page, next_node, next_index)
+                        let next_latch = self.buffer_pool.fetch_page_write_owned(next_id).await?;
+                        let next_node = next_latch.node()?.assume_internal();
+                        (latch, internal, next_latch, next_node, next_index)
                     } else {
                         unreachable!()
                     }
@@ -478,46 +479,32 @@ impl<'a> Index {
                 }
                 if parent.header.size == 0 && parent.parent().is_none() {
                     //change root node
-                    *self.root.write().await = left_node.page_id();
+                    if let Some(root_latch) = root_latch.take() {
+                        let mut root_latch = root_latch.assume_write();
+                        *root_latch = left_node.page_id();
+                    };
                     left_node.header.parent = None;
-                    left_page
-                        .data_write()
-                        .await
-                        .write_back(&Node::Internal(left_node))?;
-                    right_page
-                        .data_write()
-                        .await
-                        .write_back(&Node::Internal(right_node))?;
+                    left_latch.write_back(&Node::Internal(left_node))?;
+                    right_latch.write_back(&Node::Internal(right_node))?;
                     return Ok(true);
                 }
-                left_page
-                    .data_write()
-                    .await
-                    .write_back(&Node::Internal(left_node))?;
-                right_page
-                    .data_write()
-                    .await
-                    .write_back(&Node::Internal(right_node))?;
-                parent_page
-                    .data_write()
-                    .await
-                    .write_back(&Node::Internal(parent))?;
+                left_latch.write_back(&Node::Internal(left_node))?;
+                right_latch.write_back(&Node::Internal(right_node))?;
+                parent_latch.write_back(&Node::Internal(parent))?;
                 Ok(false)
             }
             Node::Leaf(leaf) => {
-                let (left_page, mut left_node, right_page, mut right_node, right_index) = {
+                let (mut left_latch, mut left_node, mut right_latch, mut right_node, right_index) = {
                     if let Some(prev_index) = prev {
                         let prev_id = parent.kv[prev_index].1;
-                        let (prev_page, prev_node) =
-                            self.buffer_pool.fetch_page_node(prev_id).await?;
-                        let prev_node = prev_node.assume_leaf();
-                        (prev_page, prev_node, page, leaf, index)
+                        let prev_latch = self.buffer_pool.fetch_page_write_owned(prev_id).await?;
+                        let prev_node = prev_latch.node()?.assume_leaf();
+                        (prev_latch, prev_node, latch, leaf, index)
                     } else if let Some(next_index) = next {
                         let next_id = parent.kv[next_index].1;
-                        let (next_page, next_node) =
-                            self.buffer_pool.fetch_page_node(next_id).await?;
-                        let next_node = next_node.assume_leaf();
-                        (page, leaf, next_page, next_node, next_index)
+                        let next_latch = self.buffer_pool.fetch_page_write_owned(next_id).await?;
+                        let next_node = next_latch.node()?.assume_leaf();
+                        (latch, leaf, next_latch, next_node, next_index)
                     } else {
                         unreachable!()
                     }
@@ -528,30 +515,18 @@ impl<'a> Index {
 
                 if parent.header.size == 0 && parent.parent().is_none() {
                     //change root node
-                    *self.root.write().await = left_node.page_id();
+                    if let Some(root_latch) = root_latch.take() {
+                        let mut root_latch = root_latch.assume_write();
+                        *root_latch = left_node.page_id();
+                    };
                     left_node.header.parent = None;
-                    left_page
-                        .data_write()
-                        .await
-                        .write_back(&Node::Leaf(left_node))?;
-                    right_page
-                        .data_write()
-                        .await
-                        .write_back(&Node::Leaf(right_node))?;
+                    left_latch.write_back(&Node::Leaf(left_node))?;
+                    right_latch.write_back(&Node::Leaf(right_node))?;
                     return Ok(true);
                 }
-                left_page
-                    .data_write()
-                    .await
-                    .write_back(&Node::Leaf(left_node))?;
-                right_page
-                    .data_write()
-                    .await
-                    .write_back(&Node::Leaf(right_node))?;
-                parent_page
-                    .data_write()
-                    .await
-                    .write_back(&Node::Internal(parent))?;
+                left_latch.write_back(&Node::Leaf(left_node))?;
+                right_latch.write_back(&Node::Leaf(right_node))?;
+                parent_latch.write_back(&Node::Internal(parent))?;
                 Ok(false)
             }
         }
@@ -965,7 +940,7 @@ mod tests {
         let db_name = "test_delete.db";
         let disk_manager = DiskManager::new(db_name).await?;
         let buffer_pool_manager = BufferPoolManager::new(100, 2, disk_manager).await?;
-        let mut index = Index::new::<u32>(buffer_pool_manager, 4).await?;
+        let index = Index::new::<u32>(buffer_pool_manager, 4).await?;
         let len = 100;
         for i in 1..len {
             index
@@ -1094,6 +1069,56 @@ mod tests {
             assert_eq!(i as u32, val.unwrap().page_id as u32);
         }
         assert!(index.search(&(len as u32 + 1)).await?.is_none());
+        tokio::fs::remove_file(db_name).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_delete_concurrency() -> RustDBResult<()> {
+        let db_name = "test_delete_concurrency.db";
+        let disk_manager = DiskManager::new(db_name).await?;
+        let buffer_pool_manager = BufferPoolManager::new(500, 2, disk_manager).await?;
+        let len = 10000;
+        let concurrency = 10;
+        let index = Arc::new(Index::new::<u32>(buffer_pool_manager, 50).await?);
+
+        let mut tasks = Vec::with_capacity(concurrency);
+        let limit = len / concurrency;
+        for i in 0..len {
+            index
+                .insert(
+                    i as u32,
+                    RecordId {
+                        page_id: i,
+                        slot_num: 0,
+                    },
+                )
+                .await?;
+        }
+        index.print::<u32>().await?;
+
+        for i in 0..concurrency {
+            let start = i * limit;
+            let end = start + limit;
+            let index_clone = index.clone();
+            let task = tokio::spawn(async move {
+                for i in start..end {
+                    let val = index_clone.delete(&(i as u32)).await?;
+                    assert!(val.is_some());
+                    assert_eq!(val.unwrap().1.page_id, i);
+                }
+                Ok::<_, RustDBError>(())
+            });
+            tasks.push(task);
+        }
+        for task in tasks {
+            task.await.unwrap()?;
+        }
+        index.print::<u32>().await?;
+        for i in 0..len {
+            let val = index.search(&(i as u32)).await?;
+            assert!(val.is_none());
+        }
         tokio::fs::remove_file(db_name).await?;
         Ok(())
     }
