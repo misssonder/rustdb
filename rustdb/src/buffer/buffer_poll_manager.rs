@@ -228,6 +228,18 @@ impl BufferPoolManager {
         Ok(page)
     }
 
+    pub async fn try_fetch_page_read_owned(
+        &self,
+        page_id: PageId,
+    ) -> RustDBResult<OwnedPageDataReadGuard> {
+        let page = self
+            .fetch_page_ref(page_id)
+            .await?
+            .ok_or(RustDBError::BufferPool("Can't fetch page".into()))?
+            .try_data_read_owned()?;
+        Ok(page)
+    }
+
     pub async fn new_page_write_owned<K>(
         &self,
         node: &mut Node<K>,
@@ -458,6 +470,14 @@ impl PageRef {
             guard,
             page_ref: self,
         }
+    }
+
+    pub fn try_data_read_owned(self) -> RustDBResult<OwnedPageDataReadGuard> {
+        let guard = self.page.data().try_read_owned()?;
+        Ok(OwnedPageDataReadGuard {
+            guard,
+            page_ref: self,
+        })
     }
 }
 

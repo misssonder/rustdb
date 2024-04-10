@@ -62,72 +62,84 @@ impl<'a> Index {
     }
 
     // todo change range to RangeBounds
-    pub async fn search_range<K>(&mut self, range: Range<K>) -> RustDBResult<Vec<RecordId>>
+    pub async fn search_range<K>(&self, range: Range<K>) -> RustDBResult<Vec<RecordId>>
     where
         K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord,
     {
-        let mut result = Vec::new();
-        let mut leaf = self.find_leaf::<K>(&range.start).await?.assume_leaf();
-        loop {
-            let start = leaf.kv.binary_search_by(|(k, _)| k.cmp(&range.start));
-            let end = leaf.kv.binary_search_by(|(k, _)| k.cmp(&range.end));
-            match (start, end) {
-                (Ok(start_index), Ok(end_index)) => {
-                    for (_, v) in leaf.kv[start_index..=end_index].iter() {
-                        result.push(*v);
-                    }
-                    if end_index < leaf.kv.len() {
-                        break;
-                    }
-                }
-                (Ok(start_index), Err(end_index)) => {
-                    if end_index < leaf.kv.len() {
+        'output: loop {
+            let mut result = Vec::new();
+            let mut route = Route::new(RouteOption::default());
+            let page_id = self
+                .find_route(KeyCondition::Equal(&range.start), &mut route)
+                .await?;
+            let mut latch = route
+                .nodes
+                .shift_remove(&page_id)
+                .unwrap()
+                .latch
+                .assume_read();
+            'search: loop {
+                let leaf = latch.node::<K>()?.assume_leaf();
+                let start = leaf.kv.binary_search_by(|(k, _)| k.cmp(&range.start));
+                let end = leaf.kv.binary_search_by(|(k, _)| k.cmp(&range.end));
+                match (start, end) {
+                    (Ok(start_index), Ok(end_index)) => {
                         for (_, v) in leaf.kv[start_index..=end_index].iter() {
                             result.push(*v);
                         }
-                        break;
-                    } else {
-                        for (_, v) in leaf.kv[start_index..].iter() {
-                            result.push(*v);
+                        if end_index < leaf.kv.len() {
+                            break 'output Ok(result);
                         }
                     }
-                }
-                (Err(start_index), Ok(end_index)) => {
-                    for (_, v) in leaf.kv[start_index..=end_index].iter() {
-                        result.push(*v);
+                    (Ok(start_index), Err(end_index)) => {
+                        if end_index < leaf.kv.len() {
+                            for (_, v) in leaf.kv[start_index..=end_index].iter() {
+                                result.push(*v);
+                            }
+                            break 'output Ok(result);
+                        } else {
+                            for (_, v) in leaf.kv[start_index..].iter() {
+                                result.push(*v);
+                            }
+                        }
                     }
-                    if end_index < leaf.kv.len() {
-                        break;
-                    }
-                }
-                (Err(start_index), Err(end_index)) => {
-                    if end_index < leaf.kv.len() {
+                    (Err(start_index), Ok(end_index)) => {
                         for (_, v) in leaf.kv[start_index..=end_index].iter() {
                             result.push(*v);
                         }
-                        break;
-                    } else if start_index < leaf.kv.len() {
-                        for (_, v) in leaf.kv[start_index..].iter() {
-                            result.push(*v);
+                        if end_index < leaf.kv.len() {
+                            break 'output Ok(result);
                         }
-                    } else {
-                        break;
+                    }
+                    (Err(start_index), Err(end_index)) => {
+                        if end_index < leaf.kv.len() {
+                            for (_, v) in leaf.kv[start_index..=end_index].iter() {
+                                result.push(*v);
+                            }
+                            break 'output Ok(result);
+                        } else if start_index < leaf.kv.len() {
+                            for (_, v) in leaf.kv[start_index..].iter() {
+                                result.push(*v);
+                            }
+                        } else {
+                            break 'output Ok(result);
+                        }
                     }
                 }
-            }
-            match leaf.next() {
-                None => break,
-                Some(next_id) => {
-                    leaf = self
-                        .buffer_pool
-                        .fetch_page_node(next_id)
-                        .await?
-                        .1
-                        .assume_leaf();
+                match leaf.next() {
+                    None => break 'output Ok(result),
+                    Some(next_id) => {
+                        latch = match self.buffer_pool.try_fetch_page_read_owned(next_id).await {
+                            Ok(latch) => latch,
+                            Err(RustDBError::TryLock(_)) => {
+                                break 'search;
+                            }
+                            Err(err) => return Err(err),
+                        };
+                    }
                 }
             }
         }
-        Ok(result)
     }
 
     pub async fn insert<K>(&self, key: K, value: RecordId) -> RustDBResult<()>
@@ -826,7 +838,7 @@ impl Latch {
         }
     }
 
-    fn assume_read_(self) -> OwnedPageDataReadGuard {
+    fn assume_read(self) -> OwnedPageDataReadGuard {
         match self {
             Latch::Read(guard) => guard,
             Latch::Write(_) => unreachable!(),
@@ -1049,7 +1061,6 @@ mod tests {
     }
 
     #[tokio::test]
-
     async fn test_search_concurrency() -> RustDBResult<()> {
         let db_name = "test_search_concurrency.db";
         let disk_manager = DiskManager::new(db_name).await?;
@@ -1087,6 +1098,72 @@ mod tests {
         for task in tasks {
             task.await.unwrap()?;
         }
+        tokio::fs::remove_file(db_name).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_search_range_concurrency() -> RustDBResult<()> {
+        let db_name = "test_search_range_concurrency.db";
+        let disk_manager = DiskManager::new(db_name).await?;
+        let buffer_pool_manager = BufferPoolManager::new(500, 2, disk_manager).await?;
+        let len = 1000;
+        let concurrency = 10;
+        let index = Arc::new(Index::new::<u32>(buffer_pool_manager, 4).await?);
+        let mut insert_tasks = Vec::with_capacity(concurrency);
+        let mut search_tasks = Vec::with_capacity(concurrency);
+        let limit = len / concurrency;
+        for i in 0..concurrency {
+            let start = i * limit;
+            let end = start + limit;
+            let index_clone = index.clone();
+            let task = tokio::spawn(async move {
+                for i in start..end {
+                    index_clone
+                        .insert(
+                            i as u32,
+                            RecordId {
+                                page_id: i,
+                                slot_num: 0,
+                            },
+                        )
+                        .await?;
+                }
+                Ok::<_, RustDBError>(())
+            });
+            insert_tasks.push(task);
+        }
+        for i in 0..concurrency {
+            let start = i * limit;
+            let end = start + limit;
+            let index_clone = index.clone();
+            let task = tokio::spawn(async move {
+                for i in start..end {
+                    let val = index_clone
+                        .search_range(Range {
+                            start: 0,
+                            end: len as u32,
+                        })
+                        .await?;
+                    assert!(val.len() >= 1);
+                }
+                Ok::<_, RustDBError>(())
+            });
+            search_tasks.push(task);
+        }
+        for task in search_tasks {
+            task.await.unwrap()?;
+        }
+        for task in insert_tasks {
+            task.await.unwrap()?;
+        }
+
+        for i in 0..len {
+            let val = index.search(&(i as u32)).await?;
+            assert!(val.is_some());
+            assert_eq!(i as u32, val.unwrap().page_id as u32);
+        }
+        assert!(index.search(&(len as u32 + 1)).await?.is_none());
         tokio::fs::remove_file(db_name).await?;
         Ok(())
     }
