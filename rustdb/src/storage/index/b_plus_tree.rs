@@ -200,7 +200,7 @@ impl<'a> Index {
         self.delete_inner(page_id, route, key).await
     }
 
-    pub async fn insert_inner<K>(
+    async fn insert_inner<K>(
         &self,
         mut page_id: PageId,
         mut route: Route<'_>,
@@ -301,7 +301,7 @@ impl<'a> Index {
         }
     }
 
-    pub async fn delete_inner<K>(
+    async fn delete_inner<K>(
         &self,
         mut page_id: PageId,
         mut route: Route<'_>,
@@ -912,101 +912,6 @@ mod tests {
     use std::ops::RangeFull;
     use std::sync::Arc;
 
-    #[tokio::test]
-    async fn test_find_route() -> RustDBResult<()> {
-        let db_name = "test_find_route.db";
-        let disk_manager = DiskManager::new(db_name).await?;
-        let buffer_pool_manager = BufferPoolManager::new(50, 2, disk_manager).await?;
-        let index = Index::new::<u32>(buffer_pool_manager, 100).await?;
-        let len = 10000;
-        for i in (0..10000).rev() {
-            index
-                .insert(
-                    i as u32,
-                    RecordId {
-                        page_id: i,
-                        slot_num: 0,
-                    },
-                )
-                .await?;
-        }
-        let page_id = index
-            .find_route(
-                KeyCondition::<&u32>::Min,
-                &mut Route::new(RouteOption::default()),
-            )
-            .await?;
-        let (_, node) = index.buffer_pool.fetch_page_node::<u32>(page_id).await?;
-        let node = node.assume_leaf();
-        assert_eq!(node.kv[0].0, 0);
-        let page_id = index
-            .find_route(
-                KeyCondition::<&u32>::Max,
-                &mut Route::new(RouteOption::default()),
-            )
-            .await?;
-        let (_, node) = index.buffer_pool.fetch_page_node::<u32>(page_id).await?;
-        let node = node.assume_leaf();
-        assert_eq!(node.kv[node.kv.len() - 1].0, len - 1);
-        tokio::fs::remove_file(db_name).await?;
-        Ok(())
-    }
-    #[tokio::test]
-    async fn test_search_range() -> RustDBResult<()> {
-        let db_name = "test_search_range.db";
-        let disk_manager = DiskManager::new(db_name).await?;
-        let buffer_pool_manager = BufferPoolManager::new(50, 2, disk_manager).await?;
-        let index = Index::new::<u32>(buffer_pool_manager, 100).await?;
-        for i in (1..1000).rev() {
-            index
-                .insert(
-                    i as u32,
-                    RecordId {
-                        page_id: i,
-                        slot_num: 0,
-                    },
-                )
-                .await?;
-            // tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-        let range = index.search_range(100..).await?;
-        assert_eq!(range.len(), 900);
-        let range = index.search_range(..=800).await?;
-        assert_eq!(range.len(), 800);
-        let range = index.search_range::<u32, _>(RangeFull).await?;
-        assert_eq!(range.len(), 999);
-        let range = index.search_range(0..900).await?;
-        assert_eq!(range.len(), 899);
-        let range = index
-            .search_range((Bound::Excluded(100), Bound::Included(1000)))
-            .await?;
-        assert_eq!(range.len(), 899);
-        let range = index.search_range(1..=1000).await?;
-        assert_eq!(range.len(), 999);
-        for (index, record) in range.into_iter().enumerate() {
-            assert_eq!(index + 1, record.page_id);
-        }
-
-        let range = index.search_range(801..=900).await?;
-        for (index, record) in range.into_iter().enumerate() {
-            assert_eq!(index + 801, record.page_id);
-        }
-
-        let range = index.search_range(800..=1200).await?;
-        assert_eq!(range.len(), 200);
-        for (index, record) in range.into_iter().enumerate() {
-            assert_eq!(index + 800, record.page_id);
-        }
-
-        let range = index.search_range(0..=1200).await?;
-        assert_eq!(range.len(), 999);
-        for (index, record) in range.into_iter().enumerate() {
-            assert_eq!(index + 1, record.page_id);
-        }
-        tokio::fs::remove_file(db_name).await?;
-        Ok(())
-    }
-
     async fn new_index(db_name: &str) -> RustDBResult<Index> {
         let disk_manager = DiskManager::new(db_name).await?;
         let buffer_pool_manager = BufferPoolManager::new(100, 2, disk_manager).await?;
@@ -1025,7 +930,6 @@ mod tests {
                     },
                 )
                 .await?;
-            // tokio::time::sleep(Duration::from_millis(100)).await;
             println!("insert: {}", i);
         }
         Ok(())
@@ -1061,6 +965,78 @@ mod tests {
         for task in tasks {
             task.await.unwrap()?;
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_find_route() -> RustDBResult<()> {
+        let db_name = "test_find_route.db";
+        let index = new_index(db_name).await?;
+        let len = 10000;
+        let keys = (0..len).collect::<Vec<_>>();
+        insert(&index, &keys).await?;
+        let page_id = index
+            .find_route(
+                KeyCondition::<&u32>::Min,
+                &mut Route::new(RouteOption::default()),
+            )
+            .await?;
+        let (_, node) = index.buffer_pool.fetch_page_node::<u32>(page_id).await?;
+        let node = node.assume_leaf();
+        assert_eq!(node.kv[0].0, 0);
+        let page_id = index
+            .find_route(
+                KeyCondition::<&u32>::Max,
+                &mut Route::new(RouteOption::default()),
+            )
+            .await?;
+        let (_, node) = index.buffer_pool.fetch_page_node::<u32>(page_id).await?;
+        let node = node.assume_leaf();
+        assert_eq!(node.kv[node.kv.len() - 1].0, len - 1);
+        tokio::fs::remove_file(db_name).await?;
+        Ok(())
+    }
+    #[tokio::test]
+    async fn test_search_range() -> RustDBResult<()> {
+        let db_name = "test_search_range.db";
+        let index = new_index(db_name).await?;
+        let keys = (1..1000).collect::<Vec<_>>();
+        insert(&index, &keys.iter().rev().copied().collect::<Vec<_>>()).await?;
+        let range = index.search_range(100..).await?;
+        assert_eq!(range.len(), 900);
+        let range = index.search_range(..=800).await?;
+        assert_eq!(range.len(), 800);
+        let range = index.search_range::<u32, _>(RangeFull).await?;
+        assert_eq!(range.len(), 999);
+        let range = index.search_range(0..900).await?;
+        assert_eq!(range.len(), 899);
+        let range = index
+            .search_range((Bound::Excluded(100), Bound::Included(1000)))
+            .await?;
+        assert_eq!(range.len(), 899);
+        let range = index.search_range(1..=1000).await?;
+        assert_eq!(range.len(), 999);
+        for (index, record) in range.into_iter().enumerate() {
+            assert_eq!(index + 1, record.page_id);
+        }
+
+        let range = index.search_range(801..=900).await?;
+        for (index, record) in range.into_iter().enumerate() {
+            assert_eq!(index + 801, record.page_id);
+        }
+
+        let range = index.search_range(800..=1200).await?;
+        assert_eq!(range.len(), 200);
+        for (index, record) in range.into_iter().enumerate() {
+            assert_eq!(index + 800, record.page_id);
+        }
+
+        let range = index.search_range(0..=1200).await?;
+        assert_eq!(range.len(), 999);
+        for (index, record) in range.into_iter().enumerate() {
+            assert_eq!(index + 1, record.page_id);
+        }
+        tokio::fs::remove_file(db_name).await?;
         Ok(())
     }
     #[tokio::test]
