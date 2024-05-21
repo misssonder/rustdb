@@ -6,9 +6,9 @@ use crate::storage::codec::{Decoder, Encoder};
 use crate::storage::page::b_plus_tree::{Header, Internal, Leaf, Node};
 use crate::storage::{PageId, RecordId};
 use indexmap::IndexMap;
-use std::collections::VecDeque;
+use std::collections::{Bound, VecDeque};
 use std::fmt::Debug;
-use std::ops::{Deref, Range};
+use std::ops::{Deref, RangeBounds};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
@@ -61,73 +61,119 @@ impl<'a> Index {
         }
     }
 
-    // todo change range to RangeBounds
-    pub async fn search_range<K>(&mut self, range: Range<K>) -> RustDBResult<Vec<RecordId>>
+    pub async fn search_range<K, R>(&self, range: R) -> RustDBResult<Vec<RecordId>>
     where
         K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord,
+        R: RangeBounds<K>,
     {
-        let mut result = Vec::new();
-        let mut leaf = self.find_leaf::<K>(&range.start).await?.assume_leaf();
-        loop {
-            let start = leaf.kv.binary_search_by(|(k, _)| k.cmp(&range.start));
-            let end = leaf.kv.binary_search_by(|(k, _)| k.cmp(&range.end));
-            match (start, end) {
-                (Ok(start_index), Ok(end_index)) => {
-                    for (_, v) in leaf.kv[start_index..=end_index].iter() {
-                        result.push(*v);
-                    }
-                    if end_index < leaf.kv.len() {
-                        break;
-                    }
-                }
-                (Ok(start_index), Err(end_index)) => {
-                    if end_index < leaf.kv.len() {
-                        for (_, v) in leaf.kv[start_index..=end_index].iter() {
-                            result.push(*v);
-                        }
-                        break;
-                    } else {
-                        for (_, v) in leaf.kv[start_index..].iter() {
-                            result.push(*v);
-                        }
-                    }
-                }
-                (Err(start_index), Ok(end_index)) => {
-                    for (_, v) in leaf.kv[start_index..=end_index].iter() {
-                        result.push(*v);
-                    }
-                    if end_index < leaf.kv.len() {
-                        break;
-                    }
-                }
-                (Err(start_index), Err(end_index)) => {
-                    if end_index < leaf.kv.len() {
-                        for (_, v) in leaf.kv[start_index..=end_index].iter() {
-                            result.push(*v);
-                        }
-                        break;
-                    } else if start_index < leaf.kv.len() {
-                        for (_, v) in leaf.kv[start_index..].iter() {
-                            result.push(*v);
-                        }
-                    } else {
-                        break;
-                    }
-                }
+        let output = 'output: loop {
+            let mut result = Vec::new();
+            let mut route = Route::new(RouteOption::default());
+            let mut excluded = Vec::with_capacity(2);
+            if let Bound::Excluded(key) = range.start_bound() {
+                excluded.push(key);
             }
-            match leaf.next() {
-                None => break,
-                Some(next_id) => {
-                    leaf = self
-                        .buffer_pool
-                        .fetch_page_node(next_id)
+            if let Bound::Excluded(key) = range.end_bound() {
+                excluded.push(key);
+            }
+            let page_id = match range.start_bound() {
+                Bound::Included(key) | Bound::Excluded(key) => {
+                    self.find_route(KeyCondition::Equal(key), &mut route)
                         .await?
-                        .1
-                        .assume_leaf();
+                }
+                Bound::Unbounded => self.find_route::<K>(KeyCondition::Min, &mut route).await?,
+            };
+            let mut latch = route
+                .nodes
+                .shift_remove(&page_id)
+                .unwrap()
+                .latch
+                .assume_read();
+            'search: loop {
+                let leaf = latch.node::<K>()?.assume_leaf();
+                let start = match range.start_bound() {
+                    Bound::Included(key) | Bound::Excluded(key) => {
+                        leaf.kv.binary_search_by(|(k, _)| k.cmp(key))
+                    }
+                    Bound::Unbounded => Ok(0),
+                };
+                let end = match range.end_bound() {
+                    Bound::Included(key) | Bound::Excluded(key) => {
+                        leaf.kv.binary_search_by(|(k, _)| k.cmp(key))
+                    }
+                    Bound::Unbounded => Ok(leaf.kv.len() - 1),
+                };
+                match (start, end) {
+                    (Ok(start_index), Ok(end_index)) => {
+                        for (k, v) in leaf.kv[start_index..=end_index].iter() {
+                            if !excluded.contains(&k) {
+                                result.push(*v);
+                            }
+                        }
+                        if end_index < leaf.kv.len() - 1 {
+                            break 'output Ok(result);
+                        }
+                    }
+                    (Ok(start_index), Err(end_index)) => {
+                        if end_index < leaf.kv.len() {
+                            for (k, v) in leaf.kv[start_index..=end_index].iter() {
+                                if !excluded.contains(&k) {
+                                    result.push(*v);
+                                }
+                            }
+                            break 'output Ok(result);
+                        } else {
+                            for (k, v) in leaf.kv[start_index..].iter() {
+                                if !excluded.contains(&k) {
+                                    result.push(*v);
+                                }
+                            }
+                        }
+                    }
+                    (Err(start_index), Ok(end_index)) => {
+                        for (k, v) in leaf.kv[start_index..=end_index].iter() {
+                            if !excluded.contains(&k) {
+                                result.push(*v);
+                            }
+                        }
+                        if end_index < leaf.kv.len() - 1 {
+                            break 'output Ok(result);
+                        }
+                    }
+                    (Err(start_index), Err(end_index)) => {
+                        if end_index < leaf.kv.len() {
+                            for (k, v) in leaf.kv[start_index..=end_index].iter() {
+                                if !excluded.contains(&k) {
+                                    result.push(*v);
+                                }
+                            }
+                            break 'output Ok(result);
+                        } else if start_index < leaf.kv.len() {
+                            for (k, v) in leaf.kv[start_index..].iter() {
+                                if !excluded.contains(&k) {
+                                    result.push(*v);
+                                }
+                            }
+                        } else {
+                            break 'output Ok(result);
+                        }
+                    }
+                }
+                match leaf.next() {
+                    None => break 'output Ok(result),
+                    Some(next_id) => {
+                        latch = match self.buffer_pool.try_fetch_page_read_owned(next_id).await {
+                            Ok(latch) => latch,
+                            Err(RustDBError::TryLock(_)) => {
+                                break 'search;
+                            }
+                            Err(err) => break 'output Err(err),
+                        };
+                    }
                 }
             }
-        }
-        Ok(result)
+        }?;
+        Ok(output)
     }
 
     pub async fn insert<K>(&self, key: K, value: RecordId) -> RustDBResult<()>
@@ -826,7 +872,7 @@ impl Latch {
         }
     }
 
-    fn assume_read_(self) -> OwnedPageDataReadGuard {
+    fn assume_read(self) -> OwnedPageDataReadGuard {
         match self {
             Latch::Read(guard) => guard,
             Latch::Write(_) => unreachable!(),
@@ -863,6 +909,7 @@ impl<'a> RootLatch<'a> {
 mod tests {
     use super::*;
     use crate::storage::disk::disk_manager::DiskManager;
+    use std::ops::RangeFull;
     use std::sync::Arc;
 
     #[tokio::test]
@@ -909,7 +956,7 @@ mod tests {
         let db_name = "test_search_range.db";
         let disk_manager = DiskManager::new(db_name).await?;
         let buffer_pool_manager = BufferPoolManager::new(50, 2, disk_manager).await?;
-        let mut index = Index::new::<u32>(buffer_pool_manager, 100).await?;
+        let index = Index::new::<u32>(buffer_pool_manager, 100).await?;
         for i in (1..1000).rev() {
             index
                 .insert(
@@ -922,44 +969,36 @@ mod tests {
                 .await?;
             // tokio::time::sleep(Duration::from_millis(100)).await;
         }
+        let range = index.search_range(100..).await?;
+        assert_eq!(range.len(), 900);
+        let range = index.search_range(..=800).await?;
+        assert_eq!(range.len(), 800);
+        let range = index.search_range::<u32, _>(RangeFull).await?;
+        assert_eq!(range.len(), 999);
+        let range = index.search_range(0..900).await?;
+        assert_eq!(range.len(), 899);
         let range = index
-            .search_range(Range {
-                start: 1,
-                end: 1000,
-            })
+            .search_range((Bound::Excluded(100), Bound::Included(1000)))
             .await?;
+        assert_eq!(range.len(), 899);
+        let range = index.search_range(1..=1000).await?;
         assert_eq!(range.len(), 999);
         for (index, record) in range.into_iter().enumerate() {
             assert_eq!(index + 1, record.page_id);
         }
 
-        let range = index
-            .search_range(Range {
-                start: 801,
-                end: 900,
-            })
-            .await?;
+        let range = index.search_range(801..=900).await?;
         for (index, record) in range.into_iter().enumerate() {
             assert_eq!(index + 801, record.page_id);
         }
 
-        let range = index
-            .search_range(Range {
-                start: 800,
-                end: 1200,
-            })
-            .await?;
+        let range = index.search_range(800..=1200).await?;
         assert_eq!(range.len(), 200);
         for (index, record) in range.into_iter().enumerate() {
             assert_eq!(index + 800, record.page_id);
         }
 
-        let range = index
-            .search_range(Range {
-                start: 0,
-                end: 1200,
-            })
-            .await?;
+        let range = index.search_range(0..=1200).await?;
         assert_eq!(range.len(), 999);
         for (index, record) in range.into_iter().enumerate() {
             assert_eq!(index + 1, record.page_id);
@@ -967,137 +1006,36 @@ mod tests {
         tokio::fs::remove_file(db_name).await?;
         Ok(())
     }
-    #[tokio::test]
-    async fn test_insert() -> RustDBResult<()> {
-        let db_name = "test_insert.db";
+
+    async fn new_index(db_name: &str) -> RustDBResult<Index> {
         let disk_manager = DiskManager::new(db_name).await?;
-        let buffer_pool_manager = BufferPoolManager::new(50, 2, disk_manager).await?;
+        let buffer_pool_manager = BufferPoolManager::new(100, 2, disk_manager).await?;
         let index = Index::new::<u32>(buffer_pool_manager, 4).await?;
-        for i in (1..100).rev() {
+        Ok(index)
+    }
+
+    async fn insert(index: &Index, keys: &[u32]) -> RustDBResult<()> {
+        for i in keys {
             index
                 .insert(
-                    i as u32,
+                    *i,
                     RecordId {
-                        page_id: i,
+                        page_id: *i as PageId,
                         slot_num: 0,
                     },
                 )
                 .await?;
             // tokio::time::sleep(Duration::from_millis(100)).await;
             println!("insert: {}", i);
-            index.print::<u32>().await?;
         }
-        for i in 1..100 {
-            let val = index.search(&i).await?;
-            assert!(val.is_some());
-            assert_eq!(i, val.unwrap().page_id as u32);
-        }
-        assert!(index.search(&101).await?.is_none());
-        tokio::fs::remove_file(db_name).await?;
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_delete() -> RustDBResult<()> {
-        let db_name = "test_delete.db";
-        let disk_manager = DiskManager::new(db_name).await?;
-        let buffer_pool_manager = BufferPoolManager::new(100, 2, disk_manager).await?;
-        let index = Index::new::<u32>(buffer_pool_manager, 4).await?;
-        let len = 100;
-        for i in 1..len {
-            index
-                .insert(
-                    i as u32,
-                    RecordId {
-                        page_id: i,
-                        slot_num: 0,
-                    },
-                )
-                .await?;
-        }
-        index.print::<u32>().await?;
-        for i in (1..len).rev() {
-            println!("delete: {}", i);
-            index.print::<u32>().await?;
-            let val = index.delete(&(i as u32)).await?;
-            assert!(val.is_some());
-        }
-
-        for i in 1..len {
-            index
-                .insert(
-                    i as u32,
-                    RecordId {
-                        page_id: i,
-                        slot_num: 0,
-                    },
-                )
-                .await?;
-        }
-        index.print::<u32>().await?;
-        for i in 1..len {
-            let val = index.delete(&(i as u32)).await?;
-            println!("delete: {}", i);
-            assert!(val.is_some());
-            index.print::<u32>().await?;
-        }
-
-        let val = index.search(&1).await?;
-        println!("{:?}", val);
-        tokio::fs::remove_file(db_name).await?;
-        Ok(())
-    }
-
-    #[tokio::test]
-
-    async fn test_search_concurrency() -> RustDBResult<()> {
-        let db_name = "test_search_concurrency.db";
-        let disk_manager = DiskManager::new(db_name).await?;
-        let buffer_pool_manager = BufferPoolManager::new(100, 2, disk_manager).await?;
-        let index = Arc::new(Index::new::<u32>(buffer_pool_manager, 4).await?);
-        let len = 10000;
-        let concurrency = 1;
-        let mut tasks = Vec::with_capacity(concurrency);
-        let limit = len / concurrency;
-        for i in 0..len {
-            index
-                .insert(
-                    i as u32,
-                    RecordId {
-                        page_id: i,
-                        slot_num: 0,
-                    },
-                )
-                .await?;
-        }
-        for i in 0..concurrency {
-            let start = i * limit;
-            let end = start + limit;
-            let index_clone = index.clone();
-            let task = tokio::spawn(async move {
-                for i in start..end {
-                    let val = index_clone.search(&(i as u32)).await?;
-                    assert!(val.is_some());
-                    assert_eq!(i as u32, val.unwrap().page_id as u32);
-                }
-                Ok::<_, RustDBError>(())
-            });
-            tasks.push(task);
-        }
-        for task in tasks {
-            task.await.unwrap()?;
-        }
-        tokio::fs::remove_file(db_name).await?;
-        Ok(())
-    }
-    #[tokio::test]
-    async fn test_insert_concurrency() -> RustDBResult<()> {
-        let db_name = "test_insert_concurrency.db";
-        let disk_manager = DiskManager::new(db_name).await?;
-        let buffer_pool_manager = BufferPoolManager::new(500, 2, disk_manager).await?;
-        let len = 10000;
-        let concurrency = 10;
-        let index = Arc::new(Index::new::<u32>(buffer_pool_manager, 50).await?);
+    async fn insert_concurrency(
+        index: Arc<Index>,
+        len: usize,
+        concurrency: usize,
+    ) -> RustDBResult<()> {
         let mut tasks = Vec::with_capacity(concurrency);
         let limit = len / concurrency;
         for i in 0..concurrency {
@@ -1123,7 +1061,123 @@ mod tests {
         for task in tasks {
             task.await.unwrap()?;
         }
+        Ok(())
+    }
+    #[tokio::test]
+    async fn test_insert() -> RustDBResult<()> {
+        let db_name = "test_insert.db";
+        let keys: Vec<u32> = (1..100).collect::<Vec<_>>();
+        let index = new_index(db_name).await?;
+        insert(&index, &keys.iter().copied().rev().collect::<Vec<_>>()).await?;
+        for i in keys {
+            let val = index.search(&i).await?;
+            assert!(val.is_some());
+            assert_eq!(i, val.unwrap().page_id as u32);
+        }
+        assert!(index.search(&101).await?.is_none());
+        tokio::fs::remove_file(db_name).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_delete() -> RustDBResult<()> {
+        let db_name = "test_delete.db";
+        let keys: Vec<u32> = (1..100).collect::<Vec<_>>();
+        let index = new_index(db_name).await?;
+        insert(&index, &keys.iter().copied().rev().collect::<Vec<_>>()).await?;
+        for key in keys.iter().rev() {
+            println!("delete: {}", key);
+            index.print::<u32>().await?;
+            let val = index.delete(key).await?;
+            assert!(val.is_some());
+        }
+        insert(&index, &keys).await?;
         index.print::<u32>().await?;
+        for i in keys {
+            let val = index.delete(&(i)).await?;
+            println!("delete: {}", i);
+            assert!(val.is_some());
+            index.print::<u32>().await?;
+        }
+
+        let val = index.search(&1).await?;
+        println!("{:?}", val);
+        tokio::fs::remove_file(db_name).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_search_concurrency() -> RustDBResult<()> {
+        let db_name = "test_search_concurrency.db";
+        let index = Arc::new(new_index(db_name).await?);
+        let len = 10000;
+        let concurrency = 1;
+        insert_concurrency(index.clone(), len, concurrency).await?;
+        let mut tasks = Vec::with_capacity(concurrency);
+        let limit = len / concurrency;
+        for i in 0..concurrency {
+            let start = i * limit;
+            let end = start + limit;
+            let index_clone = index.clone();
+            let task = tokio::spawn(async move {
+                for i in start..end {
+                    let val = index_clone.search(&(i as u32)).await?;
+                    assert!(val.is_some());
+                    assert_eq!(i as u32, val.unwrap().page_id as u32);
+                }
+                Ok::<_, RustDBError>(())
+            });
+            tasks.push(task);
+        }
+        for task in tasks {
+            task.await.unwrap()?;
+        }
+        tokio::fs::remove_file(db_name).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_search_range_concurrency() -> RustDBResult<()> {
+        let db_name = "test_search_range_concurrency.db";
+        let len = 1000;
+        let concurrency = 10;
+        let index = Arc::new(new_index(db_name).await?);
+        insert_concurrency(index.clone(), len, concurrency).await?;
+        let mut search_tasks = Vec::with_capacity(concurrency);
+        let limit = len / concurrency;
+        for i in 0..concurrency {
+            let start = i * limit;
+            let end = start + limit;
+            let index_clone = index.clone();
+            let task = tokio::spawn(async move {
+                for i in start..end {
+                    let val = index_clone.search_range(0..=len as u32).await?;
+                    assert!(!val.is_empty());
+                }
+                Ok::<_, RustDBError>(())
+            });
+            search_tasks.push(task);
+        }
+        for task in search_tasks {
+            task.await.unwrap()?;
+        }
+
+        for i in 0..len {
+            let val = index.search(&(i as u32)).await?;
+            assert!(val.is_some());
+            assert_eq!(i as u32, val.unwrap().page_id as u32);
+        }
+        assert!(index.search(&(len as u32 + 1)).await?.is_none());
+        tokio::fs::remove_file(db_name).await?;
+        Ok(())
+    }
+    #[tokio::test]
+    async fn test_insert_concurrency() -> RustDBResult<()> {
+        let db_name = "test_insert_concurrency.db";
+        let len = 10000;
+        let concurrency = 10;
+        let index = Arc::new(new_index(db_name).await?);
+        insert_concurrency(index.clone(), len, concurrency).await?;
 
         for i in 0..len {
             let val = index.search(&(i as u32)).await?;
@@ -1138,26 +1192,12 @@ mod tests {
     #[tokio::test]
     async fn test_delete_concurrency() -> RustDBResult<()> {
         let db_name = "test_delete_concurrency.db";
-        let disk_manager = DiskManager::new(db_name).await?;
-        let buffer_pool_manager = BufferPoolManager::new(500, 2, disk_manager).await?;
         let len = 10000;
         let concurrency = 10;
-        let index = Arc::new(Index::new::<u32>(buffer_pool_manager, 50).await?);
-
+        let index = Arc::new(new_index(db_name).await?);
+        insert_concurrency(index.clone(), len, concurrency).await?;
         let mut tasks = Vec::with_capacity(concurrency);
         let limit = len / concurrency;
-        for i in 0..len {
-            index
-                .insert(
-                    i as u32,
-                    RecordId {
-                        page_id: i,
-                        slot_num: 0,
-                    },
-                )
-                .await?;
-        }
-        index.print::<u32>().await?;
 
         for i in 0..concurrency {
             let start = i * limit;
