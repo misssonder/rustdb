@@ -6,9 +6,9 @@ use crate::storage::codec::{Decoder, Encoder};
 use crate::storage::page::b_plus_tree::{Header, Internal, Leaf, Node};
 use crate::storage::{PageId, RecordId};
 use indexmap::IndexMap;
-use std::collections::VecDeque;
+use std::collections::{Bound, VecDeque};
 use std::fmt::Debug;
-use std::ops::{Deref, Range};
+use std::ops::{Deref, RangeBounds};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
@@ -61,17 +61,28 @@ impl<'a> Index {
         }
     }
 
-    // todo change range to RangeBounds
-    pub async fn search_range<K>(&self, range: Range<K>) -> RustDBResult<Vec<RecordId>>
+    pub async fn search_range<K, R>(&self, range: R) -> RustDBResult<Vec<RecordId>>
     where
         K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord,
+        R: RangeBounds<K>,
     {
-        'output: loop {
+        let output = 'output: loop {
             let mut result = Vec::new();
             let mut route = Route::new(RouteOption::default());
-            let page_id = self
-                .find_route(KeyCondition::Equal(&range.start), &mut route)
-                .await?;
+            let mut excluded = Vec::with_capacity(2);
+            if let Bound::Excluded(key) = range.start_bound() {
+                excluded.push(key);
+            }
+            if let Bound::Excluded(key) = range.end_bound() {
+                excluded.push(key);
+            }
+            let page_id = match range.start_bound() {
+                Bound::Included(key) | Bound::Excluded(key) => {
+                    self.find_route(KeyCondition::Equal(key), &mut route)
+                        .await?
+                }
+                Bound::Unbounded => self.find_route::<K>(KeyCondition::Min, &mut route).await?,
+            };
             let mut latch = route
                 .nodes
                 .shift_remove(&page_id)
@@ -80,46 +91,68 @@ impl<'a> Index {
                 .assume_read();
             'search: loop {
                 let leaf = latch.node::<K>()?.assume_leaf();
-                let start = leaf.kv.binary_search_by(|(k, _)| k.cmp(&range.start));
-                let end = leaf.kv.binary_search_by(|(k, _)| k.cmp(&range.end));
+                let start = match range.start_bound() {
+                    Bound::Included(key) | Bound::Excluded(key) => {
+                        leaf.kv.binary_search_by(|(k, _)| k.cmp(key))
+                    }
+                    Bound::Unbounded => Ok(0),
+                };
+                let end = match range.end_bound() {
+                    Bound::Included(key) | Bound::Excluded(key) => {
+                        leaf.kv.binary_search_by(|(k, _)| k.cmp(key))
+                    }
+                    Bound::Unbounded => Ok(leaf.kv.len() - 1),
+                };
                 match (start, end) {
                     (Ok(start_index), Ok(end_index)) => {
-                        for (_, v) in leaf.kv[start_index..=end_index].iter() {
-                            result.push(*v);
+                        for (k, v) in leaf.kv[start_index..=end_index].iter() {
+                            if !excluded.contains(&k) {
+                                result.push(*v);
+                            }
                         }
-                        if end_index < leaf.kv.len() {
+                        if end_index < leaf.kv.len() - 1 {
                             break 'output Ok(result);
                         }
                     }
                     (Ok(start_index), Err(end_index)) => {
                         if end_index < leaf.kv.len() {
-                            for (_, v) in leaf.kv[start_index..=end_index].iter() {
-                                result.push(*v);
+                            for (k, v) in leaf.kv[start_index..=end_index].iter() {
+                                if !excluded.contains(&k) {
+                                    result.push(*v);
+                                }
                             }
                             break 'output Ok(result);
                         } else {
-                            for (_, v) in leaf.kv[start_index..].iter() {
-                                result.push(*v);
+                            for (k, v) in leaf.kv[start_index..].iter() {
+                                if !excluded.contains(&k) {
+                                    result.push(*v);
+                                }
                             }
                         }
                     }
                     (Err(start_index), Ok(end_index)) => {
-                        for (_, v) in leaf.kv[start_index..=end_index].iter() {
-                            result.push(*v);
+                        for (k, v) in leaf.kv[start_index..=end_index].iter() {
+                            if !excluded.contains(&k) {
+                                result.push(*v);
+                            }
                         }
-                        if end_index < leaf.kv.len() {
+                        if end_index < leaf.kv.len() - 1 {
                             break 'output Ok(result);
                         }
                     }
                     (Err(start_index), Err(end_index)) => {
                         if end_index < leaf.kv.len() {
-                            for (_, v) in leaf.kv[start_index..=end_index].iter() {
-                                result.push(*v);
+                            for (k, v) in leaf.kv[start_index..=end_index].iter() {
+                                if !excluded.contains(&k) {
+                                    result.push(*v);
+                                }
                             }
                             break 'output Ok(result);
                         } else if start_index < leaf.kv.len() {
-                            for (_, v) in leaf.kv[start_index..].iter() {
-                                result.push(*v);
+                            for (k, v) in leaf.kv[start_index..].iter() {
+                                if !excluded.contains(&k) {
+                                    result.push(*v);
+                                }
                             }
                         } else {
                             break 'output Ok(result);
@@ -134,12 +167,13 @@ impl<'a> Index {
                             Err(RustDBError::TryLock(_)) => {
                                 break 'search;
                             }
-                            Err(err) => return Err(err),
+                            Err(err) => break 'output Err(err),
                         };
                     }
                 }
             }
-        }
+        }?;
+        Ok(output)
     }
 
     pub async fn insert<K>(&self, key: K, value: RecordId) -> RustDBResult<()>
@@ -875,6 +909,7 @@ impl<'a> RootLatch<'a> {
 mod tests {
     use super::*;
     use crate::storage::disk::disk_manager::DiskManager;
+    use std::ops::RangeFull;
     use std::sync::Arc;
 
     #[tokio::test]
@@ -934,44 +969,36 @@ mod tests {
                 .await?;
             // tokio::time::sleep(Duration::from_millis(100)).await;
         }
+        let range = index.search_range(100..).await?;
+        assert_eq!(range.len(), 900);
+        let range = index.search_range(..=800).await?;
+        assert_eq!(range.len(), 800);
+        let range = index.search_range::<u32, _>(RangeFull).await?;
+        assert_eq!(range.len(), 999);
+        let range = index.search_range(0..900).await?;
+        assert_eq!(range.len(), 899);
         let range = index
-            .search_range(Range {
-                start: 1,
-                end: 1000,
-            })
+            .search_range((Bound::Excluded(100), Bound::Included(1000)))
             .await?;
+        assert_eq!(range.len(), 899);
+        let range = index.search_range(1..=1000).await?;
         assert_eq!(range.len(), 999);
         for (index, record) in range.into_iter().enumerate() {
             assert_eq!(index + 1, record.page_id);
         }
 
-        let range = index
-            .search_range(Range {
-                start: 801,
-                end: 900,
-            })
-            .await?;
+        let range = index.search_range(801..=900).await?;
         for (index, record) in range.into_iter().enumerate() {
             assert_eq!(index + 801, record.page_id);
         }
 
-        let range = index
-            .search_range(Range {
-                start: 800,
-                end: 1200,
-            })
-            .await?;
+        let range = index.search_range(800..=1200).await?;
         assert_eq!(range.len(), 200);
         for (index, record) in range.into_iter().enumerate() {
             assert_eq!(index + 800, record.page_id);
         }
 
-        let range = index
-            .search_range(Range {
-                start: 0,
-                end: 1200,
-            })
-            .await?;
+        let range = index.search_range(0..=1200).await?;
         assert_eq!(range.len(), 999);
         for (index, record) in range.into_iter().enumerate() {
             assert_eq!(index + 1, record.page_id);
@@ -1124,12 +1151,7 @@ mod tests {
             let index_clone = index.clone();
             let task = tokio::spawn(async move {
                 for i in start..end {
-                    let val = index_clone
-                        .search_range(Range {
-                            start: 0,
-                            end: len as u32,
-                        })
-                        .await?;
+                    let val = index_clone.search_range(0..=len as u32).await?;
                     assert!(!val.is_empty());
                 }
                 Ok::<_, RustDBError>(())
