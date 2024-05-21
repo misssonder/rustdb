@@ -921,7 +921,7 @@ mod tests {
         let db_name = "test_search_range.db";
         let disk_manager = DiskManager::new(db_name).await?;
         let buffer_pool_manager = BufferPoolManager::new(50, 2, disk_manager).await?;
-        let mut index = Index::new::<u32>(buffer_pool_manager, 100).await?;
+        let index = Index::new::<u32>(buffer_pool_manager, 100).await?;
         for i in (1..1000).rev() {
             index
                 .insert(
@@ -979,27 +979,70 @@ mod tests {
         tokio::fs::remove_file(db_name).await?;
         Ok(())
     }
-    #[tokio::test]
-    async fn test_insert() -> RustDBResult<()> {
-        let db_name = "test_insert.db";
+
+    async fn new_index(db_name: &str) -> RustDBResult<Index> {
         let disk_manager = DiskManager::new(db_name).await?;
-        let buffer_pool_manager = BufferPoolManager::new(50, 2, disk_manager).await?;
+        let buffer_pool_manager = BufferPoolManager::new(100, 2, disk_manager).await?;
         let index = Index::new::<u32>(buffer_pool_manager, 4).await?;
-        for i in (1..100).rev() {
+        Ok(index)
+    }
+
+    async fn insert(index: &Index, keys: &[u32]) -> RustDBResult<()> {
+        for i in keys {
             index
                 .insert(
-                    i as u32,
+                    *i,
                     RecordId {
-                        page_id: i,
+                        page_id: *i as PageId,
                         slot_num: 0,
                     },
                 )
                 .await?;
             // tokio::time::sleep(Duration::from_millis(100)).await;
             println!("insert: {}", i);
-            index.print::<u32>().await?;
         }
-        for i in 1..100 {
+        Ok(())
+    }
+
+    async fn insert_concurrency(
+        index: Arc<Index>,
+        len: usize,
+        concurrency: usize,
+    ) -> RustDBResult<()> {
+        let mut tasks = Vec::with_capacity(concurrency);
+        let limit = len / concurrency;
+        for i in 0..concurrency {
+            let start = i * limit;
+            let end = start + limit;
+            let index_clone = index.clone();
+            let task = tokio::spawn(async move {
+                for i in start..end {
+                    index_clone
+                        .insert(
+                            i as u32,
+                            RecordId {
+                                page_id: i,
+                                slot_num: 0,
+                            },
+                        )
+                        .await?;
+                }
+                Ok::<_, RustDBError>(())
+            });
+            tasks.push(task);
+        }
+        for task in tasks {
+            task.await.unwrap()?;
+        }
+        Ok(())
+    }
+    #[tokio::test]
+    async fn test_insert() -> RustDBResult<()> {
+        let db_name = "test_insert.db";
+        let keys: Vec<u32> = (1..100).collect::<Vec<_>>();
+        let index = new_index(db_name).await?;
+        insert(&index, &keys.iter().copied().rev().collect::<Vec<_>>()).await?;
+        for i in keys {
             let val = index.search(&i).await?;
             assert!(val.is_some());
             assert_eq!(i, val.unwrap().page_id as u32);
@@ -1012,43 +1055,19 @@ mod tests {
     #[tokio::test]
     async fn test_delete() -> RustDBResult<()> {
         let db_name = "test_delete.db";
-        let disk_manager = DiskManager::new(db_name).await?;
-        let buffer_pool_manager = BufferPoolManager::new(100, 2, disk_manager).await?;
-        let index = Index::new::<u32>(buffer_pool_manager, 4).await?;
-        let len = 100;
-        for i in 1..len {
-            index
-                .insert(
-                    i as u32,
-                    RecordId {
-                        page_id: i,
-                        slot_num: 0,
-                    },
-                )
-                .await?;
-        }
-        index.print::<u32>().await?;
-        for i in (1..len).rev() {
-            println!("delete: {}", i);
+        let keys: Vec<u32> = (1..100).collect::<Vec<_>>();
+        let index = new_index(db_name).await?;
+        insert(&index, &keys.iter().copied().rev().collect::<Vec<_>>()).await?;
+        for key in keys.iter().rev() {
+            println!("delete: {}", key);
             index.print::<u32>().await?;
-            let val = index.delete(&(i as u32)).await?;
+            let val = index.delete(key).await?;
             assert!(val.is_some());
         }
-
-        for i in 1..len {
-            index
-                .insert(
-                    i as u32,
-                    RecordId {
-                        page_id: i,
-                        slot_num: 0,
-                    },
-                )
-                .await?;
-        }
+        insert(&index, &keys).await?;
         index.print::<u32>().await?;
-        for i in 1..len {
-            let val = index.delete(&(i as u32)).await?;
+        for i in keys {
+            let val = index.delete(&(i)).await?;
             println!("delete: {}", i);
             assert!(val.is_some());
             index.print::<u32>().await?;
@@ -1063,24 +1082,12 @@ mod tests {
     #[tokio::test]
     async fn test_search_concurrency() -> RustDBResult<()> {
         let db_name = "test_search_concurrency.db";
-        let disk_manager = DiskManager::new(db_name).await?;
-        let buffer_pool_manager = BufferPoolManager::new(100, 2, disk_manager).await?;
-        let index = Arc::new(Index::new::<u32>(buffer_pool_manager, 4).await?);
+        let index = Arc::new(new_index(db_name).await?);
         let len = 10000;
         let concurrency = 1;
+        insert_concurrency(index.clone(), len, concurrency).await?;
         let mut tasks = Vec::with_capacity(concurrency);
         let limit = len / concurrency;
-        for i in 0..len {
-            index
-                .insert(
-                    i as u32,
-                    RecordId {
-                        page_id: i,
-                        slot_num: 0,
-                    },
-                )
-                .await?;
-        }
         for i in 0..concurrency {
             let start = i * limit;
             let end = start + limit;
@@ -1105,34 +1112,12 @@ mod tests {
     #[tokio::test]
     async fn test_search_range_concurrency() -> RustDBResult<()> {
         let db_name = "test_search_range_concurrency.db";
-        let disk_manager = DiskManager::new(db_name).await?;
-        let buffer_pool_manager = BufferPoolManager::new(500, 2, disk_manager).await?;
         let len = 1000;
         let concurrency = 10;
-        let index = Arc::new(Index::new::<u32>(buffer_pool_manager, 4).await?);
-        let mut insert_tasks = Vec::with_capacity(concurrency);
+        let index = Arc::new(new_index(db_name).await?);
+        insert_concurrency(index.clone(), len, concurrency).await?;
         let mut search_tasks = Vec::with_capacity(concurrency);
         let limit = len / concurrency;
-        for i in 0..concurrency {
-            let start = i * limit;
-            let end = start + limit;
-            let index_clone = index.clone();
-            let task = tokio::spawn(async move {
-                for i in start..end {
-                    index_clone
-                        .insert(
-                            i as u32,
-                            RecordId {
-                                page_id: i,
-                                slot_num: 0,
-                            },
-                        )
-                        .await?;
-                }
-                Ok::<_, RustDBError>(())
-            });
-            insert_tasks.push(task);
-        }
         for i in 0..concurrency {
             let start = i * limit;
             let end = start + limit;
@@ -1145,16 +1130,13 @@ mod tests {
                             end: len as u32,
                         })
                         .await?;
-                    assert!(val.len() >= 1);
+                    assert!(!val.is_empty());
                 }
                 Ok::<_, RustDBError>(())
             });
             search_tasks.push(task);
         }
         for task in search_tasks {
-            task.await.unwrap()?;
-        }
-        for task in insert_tasks {
             task.await.unwrap()?;
         }
 
@@ -1170,37 +1152,10 @@ mod tests {
     #[tokio::test]
     async fn test_insert_concurrency() -> RustDBResult<()> {
         let db_name = "test_insert_concurrency.db";
-        let disk_manager = DiskManager::new(db_name).await?;
-        let buffer_pool_manager = BufferPoolManager::new(500, 2, disk_manager).await?;
         let len = 10000;
         let concurrency = 10;
-        let index = Arc::new(Index::new::<u32>(buffer_pool_manager, 50).await?);
-        let mut tasks = Vec::with_capacity(concurrency);
-        let limit = len / concurrency;
-        for i in 0..concurrency {
-            let start = i * limit;
-            let end = start + limit;
-            let index_clone = index.clone();
-            let task = tokio::spawn(async move {
-                for i in start..end {
-                    index_clone
-                        .insert(
-                            i as u32,
-                            RecordId {
-                                page_id: i,
-                                slot_num: 0,
-                            },
-                        )
-                        .await?;
-                }
-                Ok::<_, RustDBError>(())
-            });
-            tasks.push(task);
-        }
-        for task in tasks {
-            task.await.unwrap()?;
-        }
-        index.print::<u32>().await?;
+        let index = Arc::new(new_index(db_name).await?);
+        insert_concurrency(index.clone(), len, concurrency).await?;
 
         for i in 0..len {
             let val = index.search(&(i as u32)).await?;
@@ -1215,26 +1170,12 @@ mod tests {
     #[tokio::test]
     async fn test_delete_concurrency() -> RustDBResult<()> {
         let db_name = "test_delete_concurrency.db";
-        let disk_manager = DiskManager::new(db_name).await?;
-        let buffer_pool_manager = BufferPoolManager::new(500, 2, disk_manager).await?;
         let len = 10000;
         let concurrency = 10;
-        let index = Arc::new(Index::new::<u32>(buffer_pool_manager, 50).await?);
-
+        let index = Arc::new(new_index(db_name).await?);
+        insert_concurrency(index.clone(), len, concurrency).await?;
         let mut tasks = Vec::with_capacity(concurrency);
         let limit = len / concurrency;
-        for i in 0..len {
-            index
-                .insert(
-                    i as u32,
-                    RecordId {
-                        page_id: i,
-                        slot_num: 0,
-                    },
-                )
-                .await?;
-        }
-        index.print::<u32>().await?;
 
         for i in 0..concurrency {
             let start = i * limit;
