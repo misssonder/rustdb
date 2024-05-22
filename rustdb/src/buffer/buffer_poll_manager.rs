@@ -487,9 +487,10 @@ mod tests {
     use std::time::Duration;
 
     #[tokio::test]
-    async fn test_buffer_pool_manager() -> RustDBResult<()> {
+    async fn buffer_pool_manager() -> RustDBResult<()> {
         let random_data = [2u8; PAGE_SIZE];
-        let db_name = "test_buffer_pool_manager.db";
+        let file = tempfile::NamedTempFile::new()?;
+        let db_name = file.path();
         let buffer_pool_size = 10;
         let k = 5;
         // No matter if `char` is signed or unsigned by default, this constraint must be met
@@ -551,14 +552,14 @@ mod tests {
         assert_eq!(page0.data_read().await.as_ref(), &random_data);
 
         // Shutdown the disk manager and remove the temporary file we created.
-        tokio::fs::remove_file(db_name).await?;
 
         Ok(())
     }
 
     #[tokio::test]
-    async fn test_simple() -> RustDBResult<()> {
-        let db_name = "test_simple.db";
+    async fn simple() -> RustDBResult<()> {
+        let file = tempfile::NamedTempFile::new()?;
+        let db_name = file.path();
         let buffer_pool_size = 10;
         let k = 5;
 
