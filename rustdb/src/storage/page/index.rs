@@ -481,11 +481,11 @@ impl<K> Leaf<K> {
 
 #[cfg(test)]
 mod tests {
-    use bytes::{Buf, BufMut};
-    use crate::encoding::{Decoder, Encoder};
     use super::*;
+    use crate::encoding::{Decoder, Encoder};
     use crate::error::{RustDBError, RustDBResult};
     use crate::storage::PAGE_SIZE;
+    use bytes::{Buf, BufMut};
 
     #[derive(PartialEq, Debug)]
     struct Key {
