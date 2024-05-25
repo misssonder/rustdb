@@ -1,5 +1,9 @@
 use crate::error::RustDBError;
+
 use bytes::{Buf, BufMut};
+pub mod index;
+
+mod record_id;
 
 pub trait Encoder: Sized {
     type Error;
