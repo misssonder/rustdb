@@ -1,8 +1,8 @@
-pub mod b_plus_tree;
+pub mod index;
 
+use crate::encoding::{Decoder, Encoder};
 use crate::error::{RustDBError, RustDBResult};
-use crate::storage::codec::{Decoder, Encoder};
-use crate::storage::page::b_plus_tree::Node;
+use crate::storage::page::index::Node;
 use crate::storage::{AtomicPageId, PageId, PAGE_SIZE};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
