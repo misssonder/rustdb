@@ -481,8 +481,10 @@ impl<K> Leaf<K> {
 
 #[cfg(test)]
 mod tests {
+    use bytes::{Buf, BufMut};
+    use crate::encoding::{Decoder, Encoder};
     use super::*;
-    use crate::error::RustDBResult;
+    use crate::error::{RustDBError, RustDBResult};
     use crate::storage::PAGE_SIZE;
 
     #[derive(PartialEq, Debug)]
