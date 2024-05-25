@@ -127,7 +127,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_lru_replacer() {
+    fn lru_replacer() {
         let mut lru_replacer = LruReplacer::new(7);
 
         // Scenario: unpin six elements, i.e. add them to the replacer.

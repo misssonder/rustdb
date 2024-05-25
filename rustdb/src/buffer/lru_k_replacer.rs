@@ -189,7 +189,7 @@ impl LruKReplacer {
 mod tests {
     use super::*;
     #[test]
-    fn test_lru_k_replacer() {
+    fn lru_k_replacer() {
         let mut lru_replacer = LruKReplacer::new(7, 2);
 
         // Scenario: add six elements to the replacer. We have [1,2,3,4,5]. Frame 6 is non-evictable.

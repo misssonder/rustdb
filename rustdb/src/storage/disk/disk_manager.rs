@@ -14,7 +14,7 @@ impl DiskManager {
         let db_file = tokio::fs::OpenOptions::new()
             .read(true)
             .write(true)
-            .truncate(true)
+            .truncate(false)
             .create(true)
             .open(path)
             .await?;

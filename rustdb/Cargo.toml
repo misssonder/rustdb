@@ -10,3 +10,5 @@ bytes.workspace = true
 indexmap.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["full"] }
+[dev-dependencies]
+tempfile.workspace = true
