@@ -14,4 +14,6 @@ pub enum RustDBError {
     Decode(String),
     #[error("[TryLock]: {0}")]
     TryLock(#[from] tokio::sync::TryLockError),
+    #[error("[Value]: {0}")]
+    Value(String),
 }
