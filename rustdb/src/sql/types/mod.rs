@@ -65,23 +65,14 @@ impl std::fmt::Display for Value {
 
 impl Value {
     pub fn check_int(&self) -> bool {
-        match self {
-            Value::Tinyint(_) | Value::Smallint(_) | Value::Integer(_) | Value::Bigint(_) => true,
-            _ => false,
-        }
+        matches!(self, Value::Tinyint(_) | Value::Smallint(_) | Value::Integer(_) | Value::Bigint(_))
     }
 
     pub fn check_float(&self) -> bool {
-        match self {
-            Value::Float(_) | Value::Double(_) => true,
-            _ => false,
-        }
+        matches!(self, Value::Float(_) | Value::Double(_))
     }
 
     pub fn check_zero(&self) -> bool {
-        match self {
-            Value::Tinyint(0) | Value::Smallint(0) | Value::Integer(0) | Value::Bigint(0) => true,
-            _ => false,
-        }
+        matches!(self, Value::Tinyint(0) | Value::Smallint(0) | Value::Integer(0) | Value::Bigint(0))
     }
 }
