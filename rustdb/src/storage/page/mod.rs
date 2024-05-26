@@ -1,7 +1,6 @@
-pub mod column;
 /// This mod contain a bunch of structures which represent the page's layout
 pub mod index;
-pub mod table;
+mod table;
 
 use crate::encoding::{Decoder, Encoder};
 use crate::error::{RustDBError, RustDBResult};

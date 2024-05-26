@@ -1,16 +1,10 @@
 use crate::error::RustDBError;
 
 use bytes::{Buf, BufMut};
-
 pub mod index;
 
-mod column;
 mod datatype;
-pub mod encoded_size;
 mod record_id;
-mod table;
-
-pub type EncoderVecLen = u32;
 
 pub trait Encoder: Sized {
     type Error;
@@ -27,9 +21,6 @@ pub trait Decoder: Sized {
         B: Buf;
 }
 
-pub trait Nullable: Sized {
-    fn null_value() -> Self;
-}
 macro_rules! impl_decoder {
     ($($ty:ty,$fn:ident);+$(;)?) => {
         $(impl Decoder for $ty {
@@ -54,19 +45,9 @@ macro_rules! impl_encoder {
             where
                 B: BufMut,
             {
-                buf.$fn(*self as $ty);
+                buf.$fn(*self);
                 Ok(())
             }
-        })+
-    };
-}
-
-macro_rules! impl_nullable_as_max {
-    ($($ty:ty);+$(;)?) => {
-        $(impl Nullable for $ty  {
-             fn null_value() -> Self{
-                 <$ty>::MAX
-             }
         })+
     };
 }
@@ -99,23 +80,6 @@ impl_encoder! {
     i128, put_i128;
     f32, put_f32;
     f64, put_f64;
-}
-
-impl_nullable_as_max! {
-    u8;
-    u16;
-    u32;
-    u64;
-    u128;
-    i8;
-    i16;
-    i32;
-    i64;
-    i128;
-    f32;
-    f64;
-    isize;
-    usize;
 }
 
 impl Decoder for bool {
@@ -199,7 +163,7 @@ impl Encoder for String {
     where
         B: BufMut,
     {
-        (self.as_bytes().len() as u32).encode(buf)?;
+        self.as_bytes().len().encode(buf)?;
         buf.put_slice(self.as_bytes());
         Ok(())
     }
@@ -212,8 +176,8 @@ impl Decoder for String {
     where
         B: Buf,
     {
-        let len = u32::decode(buf)?;
-        let mut bytes = Vec::with_capacity(len as usize);
+        let len = usize::decode(buf)?;
+        let mut bytes = Vec::with_capacity(len);
         for _ in 0..len {
             bytes.push(u8::decode(buf)?)
         }
@@ -222,149 +186,6 @@ impl Decoder for String {
     }
 }
 
-impl Decoder for Option<bool> {
-    type Error = RustDBError;
-
-    fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
-    where
-        B: Buf,
-    {
-        let val = buf.get_u8();
-        Ok(match val {
-            0 => Some(false),
-            1 => Some(true),
-            u8::MAX => None,
-            other => return Err(RustDBError::Decode(format!("Can't decode {other} as bool"))),
-        })
-    }
-}
-
-impl Encoder for Option<bool> {
-    type Error = RustDBError;
-
-    fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
-    where
-        B: BufMut,
-    {
-        match *self {
-            None => buf.put_u8(u8::null_value()),
-            Some(true) => buf.put_u8(1),
-            Some(false) => buf.put_u8(0),
-        }
-        Ok(())
-    }
-}
-
-impl Decoder for Option<String> {
-    type Error = RustDBError;
-
-    fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
-    where
-        B: Buf,
-    {
-        let null_value = u32::null_value();
-        let len = u32::decode(buf)?;
-        if len == null_value {
-            return Ok(None);
-        }
-        let mut bytes = Vec::with_capacity(len as usize);
-        for _ in 0..len {
-            bytes.push(u8::decode(buf)?)
-        }
-        String::from_utf8(bytes)
-            .map(Some)
-            .map_err(|err| RustDBError::Decode("Can't read bytes in utf-8".into()))
-    }
-}
-
-impl Encoder for Option<String> {
-    type Error = RustDBError;
-
-    fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
-    where
-        B: BufMut,
-    {
-        match self {
-            None => u32::null_value().encode(buf),
-            Some(str) => str.encode(buf),
-        }
-    }
-}
-
-impl<T> Decoder for Option<T>
-where
-    T: Decoder<Error = RustDBError> + Nullable + PartialEq,
-{
-    type Error = RustDBError;
-
-    fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
-    where
-        B: Buf,
-    {
-        let max_value = T::null_value();
-        let decoded = T::decode(buf)?;
-        if decoded == max_value {
-            Ok(None)
-        } else {
-            Ok(Some(decoded))
-        }
-    }
-}
-
-impl<T> Encoder for Option<T>
-where
-    T: Encoder<Error = RustDBError> + Nullable,
-{
-    type Error = RustDBError;
-
-    fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
-    where
-        B: BufMut,
-    {
-        let max_value = T::null_value();
-        match self {
-            None => max_value.encode(buf),
-            Some(t) => t.encode(buf),
-        }
-    }
-}
-
-impl<T> Decoder for Vec<T>
-where
-    T: Decoder<Error = RustDBError>,
-{
-    type Error = RustDBError;
-
-    fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
-    where
-        B: Buf,
-    {
-        let len = EncoderVecLen::decode(buf)?;
-        let mut output = Vec::with_capacity(len as usize);
-        for _ in 0..len {
-            output.push(T::decode(buf)?);
-        }
-        Ok(output)
-    }
-}
-
-impl<T> Encoder for Vec<T>
-where
-    T: Encoder<Error = RustDBError>,
-{
-    type Error = RustDBError;
-
-    fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
-    where
-        B: BufMut,
-    {
-        (self.len() as EncoderVecLen).encode(buf)?;
-        for data in self {
-            data.encode(buf)?;
-        }
-        Ok(())
-    }
-}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -372,35 +193,9 @@ mod tests {
 
     #[test]
     fn encode_decode() {
-        {
-            let mut buffer = [0; PAGE_SIZE];
-            let str = String::from("Hello world");
-            str.encode(&mut buffer.as_mut()).unwrap();
-            assert_eq!(String::decode(&mut buffer.as_ref()).unwrap(), str);
-        }
-        {
-            let mut buffer = [0; PAGE_SIZE];
-            let val: u32 = 256;
-            val.encode(&mut buffer.as_mut()).unwrap();
-            assert_eq!(u32::decode(&mut buffer.as_ref()).unwrap(), val);
-        }
-        {
-            let mut buffer = [0; PAGE_SIZE];
-            let val: Option<u32> = Some(256);
-            val.encode(&mut buffer.as_mut()).unwrap();
-            assert_eq!(Option::<u32>::decode(&mut buffer.as_ref()).unwrap(), val);
-        }
-        {
-            let mut buffer = [0; PAGE_SIZE];
-            let val: Option<u32> = None;
-            val.encode(&mut buffer.as_mut()).unwrap();
-            assert_eq!(Option::<u32>::decode(&mut buffer.as_ref()).unwrap(), val);
-        }
-        {
-            let mut buffer = [0; PAGE_SIZE];
-            let val: Option<bool> = None;
-            u8::MAX.encode(&mut buffer.as_mut()).unwrap();
-            assert_eq!(Option::<bool>::decode(&mut buffer.as_ref()).unwrap(), val);
-        }
+        let mut buffer = [0; PAGE_SIZE];
+        let str = String::from("Hello world");
+        str.encode(&mut buffer.as_mut()).unwrap();
+        assert_eq!(String::decode(&mut buffer.as_ref()).unwrap(), str);
     }
 }

@@ -1,12 +1,9 @@
-use crate::encoding::encoded_size::EncodedSize;
 use crate::encoding::{Decoder, Encoder};
 use crate::error::{RustDBError, RustDBResult};
 use crate::sql::types::{DataType, Value};
 use bytes::{Buf, BufMut};
 
 mod basetype {
-    use std::mem;
-
     pub const BOOLEAN: u8 = 0;
     pub const TINYINT: u8 = 1;
     pub const SMALLINT: u8 = 2;
@@ -15,12 +12,9 @@ mod basetype {
     pub const FLOAT: u8 = 5;
     pub const DOUBLE: u8 = 6;
     pub const STRING: u8 = 7;
-    pub const ENCODED_SIZE: usize = mem::size_of::<u8>();
 }
 
 mod basevalue {
-    use std::mem;
-
     pub const NULL: u8 = u8::MAX;
     pub const BOOLEAN: u8 = 0;
     pub const TINYINT: u8 = 1;
@@ -30,11 +24,6 @@ mod basevalue {
     pub const FLOAT: u8 = 5;
     pub const DOUBLE: u8 = 6;
     pub const STRING: u8 = 7;
-
-    pub const NONE_VALUE: u8 = u8::MAX;
-    pub const SOME_VALUE: u8 = 1;
-
-    pub const ENCODED_SIZE: usize = mem::size_of::<u8>();
 }
 
 impl DataType {
@@ -90,12 +79,6 @@ impl Encoder for DataType {
         B: BufMut,
     {
         self.as_byte().encode(buf)
-    }
-}
-
-impl EncodedSize for DataType {
-    fn encoded_size(&self) -> usize {
-        self.as_byte().encoded_size()
     }
 }
 
@@ -172,64 +155,6 @@ impl Encoder for Value {
     }
 }
 
-impl EncodedSize for Value {
-    fn encoded_size(&self) -> usize {
-        basevalue::ENCODED_SIZE
-            + match self {
-                Value::Null => 0,
-                Value::Boolean(boolean) => boolean.encoded_size(),
-                Value::Tinyint(tinyint) => tinyint.encoded_size(),
-                Value::Smallint(smallint) => smallint.encoded_size(),
-                Value::Integer(integer) => integer.encoded_size(),
-                Value::Bigint(bigint) => bigint.encoded_size(),
-                Value::Float(float) => float.encoded_size(),
-                Value::Double(double) => double.encoded_size(),
-                Value::String(str) => str.encoded_size(),
-            }
-    }
-}
-
-impl Encoder for Option<Value> {
-    type Error = RustDBError;
-
-    fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
-    where
-        B: BufMut,
-    {
-        match self {
-            None => basevalue::NONE_VALUE.encode(buf),
-            Some(val) => {
-                basevalue::SOME_VALUE.encode(buf)?;
-                val.encode(buf)
-            }
-        }
-    }
-}
-
-impl Decoder for Option<Value> {
-    type Error = RustDBError;
-
-    fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
-    where
-        B: Buf,
-    {
-        Ok(match u8::decode(buf)? {
-            basevalue::NONE_VALUE => None,
-            _ => Some(Value::decode(buf)?),
-        })
-    }
-}
-
-impl EncodedSize for Option<Value> {
-    fn encoded_size(&self) -> usize {
-        basevalue::ENCODED_SIZE
-            + match self {
-                None => 0,
-                Some(value) => value.encoded_size(),
-            }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -240,7 +165,7 @@ mod tests {
         let mut buffer = [0; PAGE_SIZE];
         let ty = DataType::Tinyint;
         ty.encode(&mut buffer.as_mut()).unwrap();
-        let decoded = DataType::decode(&mut buffer[..ty.encoded_size()].as_ref()).unwrap();
+        let decoded = DataType::decode(&mut buffer.as_ref()).unwrap();
         assert_eq!(decoded, ty)
     }
 
@@ -250,29 +175,14 @@ mod tests {
             let mut buffer = [0; PAGE_SIZE];
             let ty = Value::Bigint(128);
             ty.encode(&mut buffer.as_mut()).unwrap();
-            let decoded = Value::decode(&mut buffer[..ty.encoded_size()].as_ref()).unwrap();
-            assert_eq!(decoded, ty)
-        }
-        {
-            let mut buffer = [0; PAGE_SIZE];
-            let ty = Value::Double(2.0);
-            ty.encode(&mut buffer.as_mut()).unwrap();
-            let decoded = Value::decode(&mut buffer[..ty.encoded_size()].as_ref()).unwrap();
-            assert_eq!(decoded, ty)
-        }
-        {
-            let mut buffer = [0; PAGE_SIZE];
-            let ty = Some(Value::Double(2.0));
-            ty.encode(&mut buffer.as_mut()).unwrap();
-            let decoded =
-                Option::<Value>::decode(&mut buffer[..ty.encoded_size()].as_ref()).unwrap();
+            let decoded = Value::decode(&mut buffer.as_ref()).unwrap();
             assert_eq!(decoded, ty)
         }
         {
             let mut buffer = [0; PAGE_SIZE];
             let ty = Value::String("Hello world".into());
             ty.encode(&mut buffer.as_mut()).unwrap();
-            let decoded = Value::decode(&mut buffer[..ty.encoded_size()].as_ref()).unwrap();
+            let decoded = Value::decode(&mut buffer.as_ref()).unwrap();
             assert_eq!(decoded, ty)
         }
     }
