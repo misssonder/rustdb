@@ -1,7 +1,7 @@
 use crate::encoding::{Decoder, Encoder};
 use crate::error::RustDBError;
 use crate::storage::page::index::{Header, Internal, Leaf, Node};
-use crate::storage::{PageId, RecordId, NULL_PAGE};
+use crate::storage::{PageId, RecordId};
 use bytes::{Buf, BufMut};
 
 const INTERNAL_TYPE: u8 = 1;
@@ -16,7 +16,7 @@ where
     where
         B: Buf,
     {
-        match buf.get_u8() {
+        match u8::decode(buf)? {
             INTERNAL_TYPE => Ok(Node::Internal(Internal::decode(buf)?)),
             LEAF_TYPE => Ok(Node::Leaf(Leaf::decode(buf)?)),
             other => Err(RustDBError::Decode(format!("Page type {} invalid", other))),
@@ -36,11 +36,11 @@ where
     {
         match self {
             Node::Internal(interval) => {
-                buf.put_u8(INTERNAL_TYPE);
+                INTERNAL_TYPE.encode(buf)?;
                 interval.encode(buf)
             }
             Node::Leaf(leaf) => {
-                buf.put_u8(LEAF_TYPE);
+                LEAF_TYPE.encode(buf)?;
                 leaf.encode(buf)
             }
         }
@@ -54,21 +54,12 @@ impl Encoder for Header {
     where
         B: BufMut,
     {
-        buf.put_u64(self.size as _);
-        buf.put_u64(self.max_size as _);
-        match self.parent {
-            None => buf.put_u64(NULL_PAGE as _),
-            Some(parent) => buf.put_u64(parent as _),
-        }
-        buf.put_u64(self.page_id as _);
-        match self.next {
-            None => buf.put_u64(NULL_PAGE as _),
-            Some(next) => buf.put_u64(next as _),
-        }
-        match self.prev {
-            None => buf.put_u64(NULL_PAGE as _),
-            Some(prev) => buf.put_u64(prev as _),
-        }
+        self.size.encode(buf)?;
+        self.max_size.encode(buf)?;
+        self.parent.encode(buf)?;
+        self.page_id.encode(buf)?;
+        self.next.encode(buf)?;
+        self.prev.encode(buf)?;
         Ok(())
     }
 }
@@ -81,21 +72,12 @@ impl Decoder for Header {
         B: Buf,
     {
         Ok(Header {
-            size: buf.get_u64() as _,
-            max_size: buf.get_u64() as _,
-            parent: match buf.get_u64() as PageId {
-                NULL_PAGE => None,
-                other => Some(other),
-            },
-            page_id: buf.get_u64() as _,
-            next: match buf.get_u64() as PageId {
-                NULL_PAGE => None,
-                other => Some(other),
-            },
-            prev: match buf.get_u64() as PageId {
-                NULL_PAGE => None,
-                other => Some(other),
-            },
+            size: usize::decode(buf)?,
+            max_size: usize::decode(buf)?,
+            parent: Option::<PageId>::decode(buf)?,
+            page_id: usize::decode(buf)?,
+            next: Option::<PageId>::decode(buf)?,
+            prev: Option::<PageId>::decode(buf)?,
         })
     }
 }
@@ -114,7 +96,7 @@ where
         let mut kv = Vec::with_capacity(header.size + 1);
         for _ in 0..header.size + 1 {
             let k = K::decode(buf)?;
-            let v = buf.get_u64() as _;
+            let v = usize::decode(buf)?;
             kv.push((k, v));
         }
         Ok(Self { header, kv })
@@ -134,7 +116,7 @@ where
         self.header.encode(buf)?;
         for (k, v) in self.kv.iter() {
             k.encode(buf)?;
-            buf.put_u64(*v as _)
+            v.encode(buf)?
         }
         Ok(())
     }

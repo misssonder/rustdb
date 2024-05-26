@@ -3,7 +3,7 @@ pub(crate) mod expression;
 use std::borrow::Cow;
 use std::fmt::{Formatter, Write};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum DataType {
     Boolean,
     Tinyint,
@@ -65,7 +65,10 @@ impl std::fmt::Display for Value {
 
 impl Value {
     pub fn check_int(&self) -> bool {
-        matches!(self, Value::Tinyint(_) | Value::Smallint(_) | Value::Integer(_) | Value::Bigint(_))
+        matches!(
+            self,
+            Value::Tinyint(_) | Value::Smallint(_) | Value::Integer(_) | Value::Bigint(_)
+        )
     }
 
     pub fn check_float(&self) -> bool {
@@ -73,6 +76,9 @@ impl Value {
     }
 
     pub fn check_zero(&self) -> bool {
-        matches!(self, Value::Tinyint(0) | Value::Smallint(0) | Value::Integer(0) | Value::Bigint(0))
+        matches!(
+            self,
+            Value::Tinyint(0) | Value::Smallint(0) | Value::Integer(0) | Value::Bigint(0)
+        )
     }
 }

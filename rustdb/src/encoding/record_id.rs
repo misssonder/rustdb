@@ -1,6 +1,6 @@
 use crate::encoding::{Decoder, Encoder};
 use crate::error::RustDBError;
-use crate::storage::RecordId;
+use crate::storage::{PageId, RecordId};
 use bytes::{Buf, BufMut};
 
 impl Decoder for RecordId {
@@ -11,8 +11,8 @@ impl Decoder for RecordId {
         B: Buf,
     {
         Ok(Self {
-            page_id: buffer.get_u64() as _,
-            slot_num: buffer.get_u32(),
+            page_id: PageId::decode(buffer)?,
+            slot_num: u32::decode(buffer)?,
         })
     }
 }
@@ -24,8 +24,8 @@ impl Encoder for RecordId {
     where
         B: BufMut,
     {
-        buffer.put_u64(self.page_id as _);
-        buffer.put_u32(self.slot_num);
+        self.page_id.encode(buffer)?;
+        self.slot_num.encode(buffer)?;
         Ok(())
     }
 }
