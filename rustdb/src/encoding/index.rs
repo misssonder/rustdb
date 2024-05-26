@@ -1,7 +1,7 @@
 use crate::encoding::{Decoder, Encoder};
 use crate::error::RustDBError;
 use crate::storage::page::index::{Header, Internal, Leaf, Node};
-use crate::storage::{RecordId, NULL_PAGE};
+use crate::storage::{PageId, RecordId};
 use bytes::{Buf, BufMut};
 
 const INTERNAL_TYPE: u8 = 1;
@@ -56,19 +56,10 @@ impl Encoder for Header {
     {
         self.size.encode(buf)?;
         self.max_size.encode(buf)?;
-        match self.parent {
-            None => NULL_PAGE.encode(buf)?,
-            Some(parent) => parent.encode(buf)?,
-        }
+        self.parent.encode(buf)?;
         self.page_id.encode(buf)?;
-        match self.next {
-            None => NULL_PAGE.encode(buf)?,
-            Some(next) => next.encode(buf)?,
-        }
-        match self.prev {
-            None => NULL_PAGE.encode(buf)?,
-            Some(prev) => prev.encode(buf)?,
-        }
+        self.next.encode(buf)?;
+        self.prev.encode(buf)?;
         Ok(())
     }
 }
@@ -83,19 +74,10 @@ impl Decoder for Header {
         Ok(Header {
             size: usize::decode(buf)?,
             max_size: usize::decode(buf)?,
-            parent: match usize::decode(buf)? {
-                NULL_PAGE => None,
-                other => Some(other),
-            },
+            parent: Option::<PageId>::decode(buf)?,
             page_id: usize::decode(buf)?,
-            next: match usize::decode(buf)? {
-                NULL_PAGE => None,
-                other => Some(other),
-            },
-            prev: match usize::decode(buf)? {
-                NULL_PAGE => None,
-                other => Some(other),
-            },
+            next: Option::<PageId>::decode(buf)?,
+            prev: Option::<PageId>::decode(buf)?,
         })
     }
 }
