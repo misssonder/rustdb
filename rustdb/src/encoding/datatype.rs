@@ -1,6 +1,5 @@
 use crate::encoding::{Decoder, Encoder};
 use crate::error::{RustDBError, RustDBResult};
-use crate::sql::types::expression::Expression;
 use crate::sql::types::{DataType, Value};
 use bytes::{Buf, BufMut};
 
@@ -25,9 +24,6 @@ mod basevalue {
     pub const FLOAT: u8 = 5;
     pub const DOUBLE: u8 = 6;
     pub const STRING: u8 = 7;
-
-    pub const NONE_VALUE: u8 = u8::MAX;
-    pub const SOME_VALUE: u8 = 1;
 }
 
 impl DataType {
@@ -159,88 +155,6 @@ impl Encoder for Value {
     }
 }
 
-impl Encoder for Option<Value> {
-    type Error = RustDBError;
-
-    fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
-    where
-        B: BufMut,
-    {
-        match self {
-            None => basevalue::NONE_VALUE.encode(buf),
-            Some(val) => val.encode(buf),
-        }
-    }
-}
-
-impl Decoder for Option<Value> {
-    type Error = RustDBError;
-
-    fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
-    where
-        B: Buf,
-    {
-        Ok(match u8::decode(buf)? {
-            basevalue::NONE_VALUE => None,
-            _ => Some(Value::decode(buf)?),
-        })
-    }
-}
-
-impl Decoder for Expression {
-    type Error = RustDBError;
-    fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
-    where
-        B: Buf,
-    {
-        let expr = Expression::Const(Value::decode(buf)?);
-        Ok(expr)
-    }
-}
-
-impl Encoder for Expression {
-    type Error = RustDBError;
-
-    fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
-    where
-        B: BufMut,
-    {
-        self.evaluate()?.encode(buf)
-    }
-}
-
-impl Decoder for Option<Expression> {
-    type Error = RustDBError;
-
-    fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
-    where
-        B: Buf,
-    {
-        let null_value = u8::decode(buf)?;
-        Ok(match null_value {
-            basevalue::NONE_VALUE => None,
-            _ => Some(Expression::decode(buf)?),
-        })
-    }
-}
-
-impl Encoder for Option<Expression> {
-    type Error = RustDBError;
-
-    fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
-    where
-        B: BufMut,
-    {
-        match self {
-            None => basevalue::NONE_VALUE.encode(buf),
-            Some(expr) => {
-                basevalue::SOME_VALUE.encode(buf)?;
-                expr.encode(buf)
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -270,26 +184,6 @@ mod tests {
             ty.encode(&mut buffer.as_mut()).unwrap();
             let decoded = Value::decode(&mut buffer.as_ref()).unwrap();
             assert_eq!(decoded, ty)
-        }
-        {
-            let mut buffer = [0; PAGE_SIZE];
-            let ty = Expression::Add(
-                Box::new(Expression::Const(Value::Integer(1))),
-                Box::new(Expression::Const(Value::Integer(1))),
-            );
-            ty.encode(&mut buffer.as_mut()).unwrap();
-            let decoded = Expression::decode(&mut buffer.as_ref()).unwrap();
-            assert_eq!(decoded, Expression::Const(Value::Integer(2)));
-        }
-        {
-            let mut buffer = [0; PAGE_SIZE];
-            let ty = Some(Expression::Add(
-                Box::new(Expression::Const(Value::Integer(1))),
-                Box::new(Expression::Const(Value::Integer(1))),
-            ));
-            ty.encode(&mut buffer.as_mut()).unwrap();
-            let decoded = Option::<Expression>::decode(&mut buffer.as_ref()).unwrap();
-            assert_eq!(decoded, Some(Expression::Const(Value::Integer(2))));
         }
     }
 }
