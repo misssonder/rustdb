@@ -1,2 +1,2 @@
-mod scheme;
-mod types;
+pub mod scheme;
+pub mod types;

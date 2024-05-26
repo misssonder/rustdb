@@ -1,4 +1,6 @@
+/// This mod contain a bunch of structures which represent the page's layout
 pub mod index;
+mod table;
 
 use crate::encoding::{Decoder, Encoder};
 use crate::error::{RustDBError, RustDBResult};

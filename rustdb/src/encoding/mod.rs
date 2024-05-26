@@ -3,6 +3,7 @@ use crate::error::RustDBError;
 use bytes::{Buf, BufMut};
 pub mod index;
 
+mod datatype;
 mod record_id;
 
 pub trait Encoder: Sized {
@@ -81,6 +82,37 @@ impl_encoder! {
     f64, put_f64;
 }
 
+impl Decoder for bool {
+    type Error = RustDBError;
+
+    fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
+    where
+        B: Buf,
+    {
+        let val = buf.get_u8();
+        Ok(match val {
+            0 => false,
+            1 => true,
+            other => return Err(RustDBError::Decode(format!("Can't decode {other} as bool"))),
+        })
+    }
+}
+
+impl Encoder for bool {
+    type Error = RustDBError;
+
+    fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
+    where
+        B: BufMut,
+    {
+        match *self {
+            true => buf.put_u8(1),
+            false => buf.put_u8(0),
+        }
+        Ok(())
+    }
+}
+
 impl Decoder for usize {
     type Error = RustDBError;
 
@@ -121,5 +153,49 @@ impl Encoder for isize {
         B: BufMut,
     {
         (*self as i64).encode(buf)
+    }
+}
+
+impl Encoder for String {
+    type Error = RustDBError;
+
+    fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
+    where
+        B: BufMut,
+    {
+        self.as_bytes().len().encode(buf)?;
+        buf.put_slice(self.as_bytes());
+        Ok(())
+    }
+}
+
+impl Decoder for String {
+    type Error = RustDBError;
+
+    fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
+    where
+        B: Buf,
+    {
+        let len = usize::decode(buf)?;
+        let mut bytes = Vec::with_capacity(len);
+        for _ in 0..len {
+            bytes.push(u8::decode(buf)?)
+        }
+        String::from_utf8(bytes)
+            .map_err(|err| RustDBError::Decode("Can't read bytes in utf-8".into()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::PAGE_SIZE;
+
+    #[test]
+    fn encode_decode() {
+        let mut buffer = [0; PAGE_SIZE];
+        let str = String::from("Hello world");
+        str.encode(&mut buffer.as_mut()).unwrap();
+        assert_eq!(String::decode(&mut buffer.as_ref()).unwrap(), str);
     }
 }
