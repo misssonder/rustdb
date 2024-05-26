@@ -1,5 +1,6 @@
 use crate::encoding::{Decoder, Encoder};
 use crate::error::{RustDBError, RustDBResult};
+use crate::sql::types::expression::Expression;
 use crate::sql::types::{DataType, Value};
 use bytes::{Buf, BufMut};
 
@@ -24,6 +25,8 @@ mod basevalue {
     pub const FLOAT: u8 = 5;
     pub const DOUBLE: u8 = 6;
     pub const STRING: u8 = 7;
+
+    pub const NONE_VALUE: u8 = u8::MAX;
 }
 
 impl DataType {
@@ -151,6 +154,83 @@ impl Encoder for Value {
                 basevalue::STRING.encode(buf)?;
                 str.encode(buf)
             }
+        }
+    }
+}
+
+impl Encoder for Option<Value> {
+    type Error = RustDBError;
+
+    fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
+    where
+        B: BufMut,
+    {
+        match self {
+            None => basevalue::NONE_VALUE.encode(buf),
+            Some(val) => val.encode(buf),
+        }
+    }
+}
+
+impl Decoder for Option<Value> {
+    type Error = RustDBError;
+
+    fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
+    where
+        B: Buf,
+    {
+        Ok(match u8::decode(buf)? {
+            basevalue::NONE_VALUE => None,
+            _ => Some(Value::decode(buf)?),
+        })
+    }
+}
+
+impl Decoder for Expression {
+    type Error = RustDBError;
+    fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
+    where
+        B: Buf,
+    {
+        Ok(Expression::Const(Value::decode(buf)?))
+    }
+}
+
+impl Encoder for Expression {
+    type Error = RustDBError;
+
+    fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
+    where
+        B: BufMut,
+    {
+        self.evaluate()?.encode(buf)
+    }
+}
+
+impl Decoder for Option<Expression> {
+    type Error = RustDBError;
+
+    fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
+    where
+        B: Buf,
+    {
+        Ok(match u8::decode(buf)? {
+            basevalue::NONE_VALUE => None,
+            _ => Some(Expression::decode(buf)?),
+        })
+    }
+}
+
+impl Encoder for Option<Expression> {
+    type Error = RustDBError;
+
+    fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
+    where
+        B: BufMut,
+    {
+        match self {
+            None => basevalue::NONE_VALUE.encode(buf),
+            Some(expr) => expr.encode(buf),
         }
     }
 }
