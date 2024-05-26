@@ -27,6 +27,7 @@ mod basevalue {
     pub const STRING: u8 = 7;
 
     pub const NONE_VALUE: u8 = u8::MAX;
+    pub const SOME_VALUE: u8 = 1;
 }
 
 impl DataType {
@@ -192,7 +193,8 @@ impl Decoder for Expression {
     where
         B: Buf,
     {
-        Ok(Expression::Const(Value::decode(buf)?))
+        let expr = Expression::Const(Value::decode(buf)?);
+        Ok(expr)
     }
 }
 
@@ -214,7 +216,8 @@ impl Decoder for Option<Expression> {
     where
         B: Buf,
     {
-        Ok(match u8::decode(buf)? {
+        let null_value = u8::decode(buf)?;
+        Ok(match null_value {
             basevalue::NONE_VALUE => None,
             _ => Some(Expression::decode(buf)?),
         })
@@ -230,7 +233,10 @@ impl Encoder for Option<Expression> {
     {
         match self {
             None => basevalue::NONE_VALUE.encode(buf),
-            Some(expr) => expr.encode(buf),
+            Some(expr) => {
+                basevalue::SOME_VALUE.encode(buf)?;
+                expr.encode(buf)
+            }
         }
     }
 }
@@ -264,6 +270,26 @@ mod tests {
             ty.encode(&mut buffer.as_mut()).unwrap();
             let decoded = Value::decode(&mut buffer.as_ref()).unwrap();
             assert_eq!(decoded, ty)
+        }
+        {
+            let mut buffer = [0; PAGE_SIZE];
+            let ty = Expression::Add(
+                Box::new(Expression::Const(Value::Integer(1))),
+                Box::new(Expression::Const(Value::Integer(1))),
+            );
+            ty.encode(&mut buffer.as_mut()).unwrap();
+            let decoded = Expression::decode(&mut buffer.as_ref()).unwrap();
+            assert_eq!(decoded, Expression::Const(Value::Integer(2)));
+        }
+        {
+            let mut buffer = [0; PAGE_SIZE];
+            let ty = Some(Expression::Add(
+                Box::new(Expression::Const(Value::Integer(1))),
+                Box::new(Expression::Const(Value::Integer(1))),
+            ));
+            ty.encode(&mut buffer.as_mut()).unwrap();
+            let decoded = Option::<Expression>::decode(&mut buffer.as_ref()).unwrap();
+            assert_eq!(decoded, Some(Expression::Const(Value::Integer(2))));
         }
     }
 }
