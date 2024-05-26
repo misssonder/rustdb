@@ -3,7 +3,7 @@ pub(crate) mod expression;
 use std::borrow::Cow;
 use std::fmt::{Formatter, Write};
 
-#[derive(Clone, Debug,PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum DataType {
     Boolean,
     Tinyint,
