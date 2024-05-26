@@ -118,3 +118,68 @@ impl Encoder for Table {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sql::types::expression::Expression;
+    use crate::sql::types::{DataType, Value};
+    use crate::storage::PAGE_SIZE;
+
+    #[test]
+    fn encode_decode() {
+        let mut buffer = [0; PAGE_SIZE];
+        let table = Table {
+            header: TableHeader {
+                start: 0,
+                end: 100,
+                next_table: None,
+                tuple_references: vec![TupleReference {
+                    offset: 256,
+                    size: 1024,
+                }],
+            },
+            name: "table_1".to_string(),
+            columns: vec![Column {
+                name: "id".to_string(),
+                datatype: DataType::Bigint,
+                primary_key: true,
+                nullable: Some(false),
+                default: Some(Expression::Add(
+                    Box::new(Expression::Const(Value::Integer(1))),
+                    Box::new(Expression::Const(Value::Integer(1))),
+                )),
+                unique: true,
+                index: true,
+                references: Some("table_2".into()),
+            }],
+        };
+        table.encode(&mut buffer.as_mut()).unwrap();
+        let decoded = Table::decode(&mut buffer.as_ref()).unwrap();
+        assert_eq!(
+            decoded,
+            Table {
+                header: TableHeader {
+                    start: 0,
+                    end: 100,
+                    next_table: None,
+                    tuple_references: vec![TupleReference {
+                        offset: 256,
+                        size: 1024,
+                    }],
+                },
+                name: "table_1".to_string(),
+                columns: vec![Column {
+                    name: "id".to_string(),
+                    datatype: DataType::Bigint,
+                    primary_key: true,
+                    nullable: Some(false),
+                    default: Some(Expression::Const(Value::Integer(2))),
+                    unique: true,
+                    index: true,
+                    references: Some("table_2".into()),
+                }],
+            }
+        )
+    }
+}

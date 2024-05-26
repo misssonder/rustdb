@@ -244,7 +244,7 @@ impl Encoder for Option<bool> {
         B: BufMut,
     {
         match *self {
-            None => buf.put_u8(u8::MAX),
+            None => buf.put_u8(u8::null_value()),
             Some(true) => buf.put_u8(1),
             Some(false) => buf.put_u8(0),
         }
