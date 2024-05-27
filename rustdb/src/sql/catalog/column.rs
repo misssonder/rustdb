@@ -8,22 +8,25 @@ pub struct ColumnCatalog {
     id: ColumnId,
     desc: ColumnDesc,
 }
-pub struct ColumnDesc2 {
-    pub name: String,
-    pub datatype: DataType,
-    pub primary_key: bool,
-    pub nullable: Option<bool>,
-    pub default: Option<Value>,
-    pub unique: bool,
-    pub index: bool,
-    pub references: Option<String>,
-}
 
 impl ColumnCatalog {
+    pub fn new(id: ColumnId, desc: ColumnDesc) -> Self {
+        Self { id, desc }
+    }
     pub fn name(&self) -> &str {
         &self.desc.name
     }
 
+    pub fn id(&self) -> ColumnId {
+        self.id
+    }
+    pub fn set_id(&mut self, column_id: ColumnId) {
+        self.id = column_id
+    }
+
+    pub fn primary(&self) -> bool {
+        self.desc.primary_key
+    }
     pub fn set_primary(&mut self, primary: bool) {
         self.desc.primary_key = primary
     }
