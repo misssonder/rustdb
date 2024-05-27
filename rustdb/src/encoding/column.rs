@@ -1,3 +1,4 @@
+use crate::encoding::encoded_size::EncodedSize;
 use crate::encoding::{Decoder, Encoder};
 use crate::error::RustDBError;
 use crate::sql::types::expression::Expression;
@@ -40,5 +41,18 @@ impl Encoder for Column {
         self.index.encode(buf)?;
         self.references.encode(buf)?;
         Ok(())
+    }
+}
+
+impl EncodedSize for Column {
+    fn encoded_size(&self) -> usize {
+        self.name.encoded_size()
+            + self.datatype.encoded_size()
+            + self.primary_key.encoded_size()
+            + self.nullable.encoded_size()
+            + self.default.encoded_size()
+            + self.unique.encoded_size()
+            + self.index.encoded_size()
+            + self.references.encoded_size()
     }
 }

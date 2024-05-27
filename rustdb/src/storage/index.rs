@@ -33,8 +33,7 @@ impl<'a> Index {
             },
             kv: Vec::new(),
         });
-        let page = buffer_pool.new_page_node(&mut node).await?;
-        page.data_write().await.write_back(&node)?;
+        buffer_pool.new_page_node(&mut node).await?;
         Ok(Self {
             buffer_pool,
             root: RwLock::new(node.page_id()),

@@ -1,7 +1,7 @@
 use crate::sql::types::expression::Expression;
 use crate::sql::types::DataType;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Column {
     pub name: String,
     pub datatype: DataType,

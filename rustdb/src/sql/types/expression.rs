@@ -1,7 +1,7 @@
 use crate::error::{RustDBError, RustDBResult};
 use crate::sql::types::Value;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expression {
     Const(Value),
 
