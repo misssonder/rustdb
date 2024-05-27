@@ -1,5 +1,6 @@
 use crate::sql::types::{DataType, Value};
 use serde::{Deserialize, Serialize};
+use std::fmt::{Display, Formatter, Write};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ColumnDesc {

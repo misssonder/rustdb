@@ -1,2 +1,2 @@
-mod catalog;
+pub mod catalog;
 pub mod types;
