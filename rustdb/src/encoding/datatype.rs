@@ -201,7 +201,7 @@ impl Encoder for Option<Value> {
             Some(val) => {
                 basevalue::SOME_VALUE.encode(buf)?;
                 val.encode(buf)
-            },
+            }
         }
     }
 }
@@ -264,7 +264,8 @@ mod tests {
             let mut buffer = [0; PAGE_SIZE];
             let ty = Some(Value::Double(2.0));
             ty.encode(&mut buffer.as_mut()).unwrap();
-            let decoded = Option::<Value>::decode(&mut buffer[..ty.encoded_size()].as_ref()).unwrap();
+            let decoded =
+                Option::<Value>::decode(&mut buffer[..ty.encoded_size()].as_ref()).unwrap();
             assert_eq!(decoded, ty)
         }
         {

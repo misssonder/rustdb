@@ -10,4 +10,3 @@ pub struct TableCatalog {
     columns: BTreeMap<ColumnId, ColumnCatalog>,
     next_column_id: ColumnId,
 }
-

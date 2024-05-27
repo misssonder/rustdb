@@ -12,23 +12,15 @@ impl Decoder for ColumnDesc {
     where
         B: Buf,
     {
-        let name = String::decode(buf)?;
-        let datatype = DataType::decode(buf)?;
-        let primary_key = bool::decode(buf)?;
-        let nullable = Option::<bool>::decode(buf)?;
-        let default = Option::<Value>::decode(buf)?;
-        let unique = bool::decode(buf)?;
-        let index = bool::decode(buf)?;
-        let references = Option::<String>::decode(buf)?;
         Ok(Self {
-            name,
-            datatype,
-            primary_key,
-            nullable,
-            default,
-            unique,
-            index,
-            references,
+            name: String::decode(buf)?,
+            datatype: DataType::decode(buf)?,
+            primary_key: bool::decode(buf)?,
+            nullable: Option::<bool>::decode(buf)?,
+            default: Option::<Value>::decode(buf)?,
+            unique: bool::decode(buf)?,
+            index: bool::decode(buf)?,
+            references: Option::<String>::decode(buf)?,
         })
     }
 }
