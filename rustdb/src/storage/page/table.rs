@@ -1,22 +1,22 @@
+use crate::sql::types::Value;
 use crate::storage::page::column::Column;
-use crate::storage::PageId;
+use crate::storage::{PageId, RecordId};
 
+/// Table is List, it contains a bunch of pages which can be decoded into TableNode
 #[derive(Debug, PartialEq)]
 pub struct Table {
-    pub header: TableHeader,
-    pub(crate) name: String,
-    pub(crate) columns: Vec<Column>,
-}
-
-#[derive(Debug, PartialEq)]
-pub struct TableHeader {
     pub(crate) start: PageId,
     pub(crate) end: PageId,
-    pub(crate) next_table: Option<PageId>,
-    pub(crate) tuple_references: Vec<TupleReference>,
+    pub(crate) columns: Vec<Column>,
 }
 #[derive(Debug, PartialEq)]
-pub struct TupleReference {
-    pub(crate) offset: u16,
-    pub(crate) size: u16,
+pub struct TableNode {
+    pub(crate) page_id: PageId,
+    pub(crate) next: Option<PageId>,
+    pub(crate) tuples: Vec<Tuple>,
+}
+#[derive(Debug, PartialEq)]
+pub struct Tuple {
+    pub(crate) record_id: RecordId,
+    pub(crate) values: Vec<Value>,
 }
