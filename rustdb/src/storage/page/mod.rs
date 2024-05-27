@@ -68,7 +68,7 @@ impl Page {
         self.decode().await
     }
 
-    pub async fn write_node_back<K>(&self, node: &Node<K>) -> RustDBResult<()>
+    pub async fn write_node_back<K>(&mut self, node: &Node<K>) -> RustDBResult<()>
     where
         K: Encoder<Error = RustDBError>,
     {
@@ -79,7 +79,7 @@ impl Page {
         self.decode().await
     }
 
-    pub async fn write_table_back(&self, table: &Table) -> RustDBResult<()> {
+    pub async fn write_table_back(&mut self, table: &Table) -> RustDBResult<()> {
         self.encode(table).await
     }
 
@@ -87,11 +87,11 @@ impl Page {
         self.decode().await
     }
 
-    pub async fn write_table_node_back(&self, table_node: &TableNode) -> RustDBResult<()> {
+    pub async fn write_table_node_back(&mut self, table_node: &TableNode) -> RustDBResult<()> {
         self.encode(table_node).await
     }
 
-    async fn encode<T>(&self, t: &T) -> RustDBResult<()>
+    async fn encode<T>(&mut self, t: &T) -> RustDBResult<()>
     where
         T: Encoder<Error = RustDBError>,
     {
