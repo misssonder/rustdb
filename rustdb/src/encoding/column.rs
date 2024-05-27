@@ -1,11 +1,12 @@
 use crate::encoding::encoded_size::EncodedSize;
 use crate::encoding::{Decoder, Encoder};
 use crate::error::RustDBError;
-use crate::sql::types::{DataType, Value};
-use crate::storage::page::column::ColumnDesc;
+use crate::sql::types::expression::Expression;
+use crate::sql::types::DataType;
+use crate::storage::page::column::Column;
 use bytes::{Buf, BufMut};
 
-impl Decoder for ColumnDesc {
+impl Decoder for Column {
     type Error = RustDBError;
 
     fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
@@ -17,14 +18,14 @@ impl Decoder for ColumnDesc {
             datatype: DataType::decode(buf)?,
             primary_key: bool::decode(buf)?,
             nullable: Option::<bool>::decode(buf)?,
-            default: Option::<Value>::decode(buf)?,
+            default: Option::<Expression>::decode(buf)?,
             unique: bool::decode(buf)?,
             index: bool::decode(buf)?,
             references: Option::<String>::decode(buf)?,
         })
     }
 }
-impl Encoder for ColumnDesc {
+impl Encoder for Column {
     type Error = RustDBError;
 
     fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
@@ -43,7 +44,7 @@ impl Encoder for ColumnDesc {
     }
 }
 
-impl EncodedSize for ColumnDesc {
+impl EncodedSize for Column {
     fn encoded_size(&self) -> usize {
         self.name.encoded_size()
             + self.datatype.encoded_size()

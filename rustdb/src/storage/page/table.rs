@@ -5,25 +5,47 @@ use crate::storage::{PageId, RecordId};
 /// Table is List, it contains a bunch of pages which can be decoded into TableNode
 #[derive(Debug, PartialEq)]
 pub struct Table {
+    /// This Table's page_id
+    pub(crate) page_id: PageId,
+    /// First TableNode's page_id
     pub(crate) start: PageId,
+    /// Last TableNode's page_id
     pub(crate) end: PageId,
+    /// Columns
     pub(crate) columns: Vec<Column>,
 }
 
 impl Table {
-    pub fn new(columns: Vec<Column>, page_id: PageId) -> Self {
+    pub fn new(page_id: PageId, columns: Vec<Column>, node_page_id: PageId) -> Self {
         Self {
-            start: page_id,
-            end: page_id,
+            page_id,
+            start: node_page_id,
+            end: node_page_id,
             columns,
         }
+    }
+
+    pub fn set_page_id(&mut self, page_id: PageId) {
+        self.page_id = page_id
+    }
+
+    pub fn page_id(&self) -> PageId {
+        self.page_id
+    }
+
+    pub fn set_start(&mut self, page_id: PageId) {
+        self.start = page_id
+    }
+
+    pub fn set_end(&mut self, page_id: PageId) {
+        self.end = page_id
     }
 }
 #[derive(Debug, PartialEq)]
 pub struct TableNode {
     pub(crate) page_id: PageId,
     pub(crate) next: Option<PageId>,
-    pub(crate) tuples: Vec<Tuple>,
+    pub(crate) tuples: Tuples,
 }
 
 impl TableNode {
@@ -35,6 +57,13 @@ impl TableNode {
         }
     }
 
+    pub fn set_page_id(&mut self, page_id: PageId) {
+        self.page_id = page_id
+    }
+
+    pub fn page_id(&self) -> PageId {
+        self.page_id
+    }
     pub fn set_next(&mut self, page_id: PageId) {
         self.next = Some(page_id)
     }
@@ -43,7 +72,7 @@ impl TableNode {
         self.next
     }
 
-    pub fn insert_tuple(&mut self, tuple: Tuple) {
+    pub fn insert(&mut self, tuple: Tuple) {
         self.tuples.push(tuple)
     }
 }
@@ -52,6 +81,8 @@ pub struct Tuple {
     pub(crate) record_id: RecordId,
     pub(crate) values: Vec<Value>,
 }
+
+pub type Tuples = Vec<Tuple>;
 
 impl Tuple {
     pub fn new(record_id: RecordId, values: Vec<Value>) -> Self {
