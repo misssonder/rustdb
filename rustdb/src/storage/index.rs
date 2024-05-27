@@ -1,5 +1,5 @@
 use crate::buffer::buffer_poll_manager::{
-    BufferPoolManager, NodeTrait, OwnedPageDataReadGuard, OwnedPageDataWriteGuard, PageRef,
+    BufferPoolManager, NodeTrait, OwnedPageDataReadGuard, OwnedPageDataWriteGuard,
 };
 use crate::encoding::{Decoder, Encoder};
 use crate::error::{RustDBError, RustDBResult};
@@ -583,25 +583,6 @@ impl<'a> Index {
         }
     }
 
-    async fn find_page_leaf<K>(&mut self, key: &K) -> RustDBResult<PageRef>
-    where
-        K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord,
-    {
-        let page_id = self.root.read().await;
-        let mut page_id = *page_id;
-        loop {
-            let (page, node) = self.buffer_pool.fetch_page_node(page_id).await?;
-            match node {
-                Node::Internal(ref internal) => {
-                    page_id = internal.search(key).1;
-                }
-                Node::Leaf(_) => {
-                    return Ok(page);
-                }
-            }
-        }
-    }
-
     /// take latches according to latch crabbin
     /// if current node is safe, then release parent latch
     /// if current node is unsafe, then take parent latch
@@ -679,25 +660,6 @@ impl<'a> Index {
                     let node = RouteNode::new(latch, parent_index);
                     route.insert(page_id, node);
                     return Ok(page_id);
-                }
-            }
-        }
-    }
-
-    async fn find_leaf<K>(&mut self, key: &K) -> RustDBResult<Node<K>>
-    where
-        K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord,
-    {
-        let page_id = self.root.read().await;
-        let mut page_id = *page_id;
-        loop {
-            let (_, node) = self.buffer_pool.fetch_page_node(page_id).await?;
-            match node {
-                Node::Internal(ref internal) => {
-                    page_id = internal.search(key).1;
-                }
-                Node::Leaf(leaf) => {
-                    return Ok(Node::Leaf(leaf));
                 }
             }
         }

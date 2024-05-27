@@ -3,6 +3,7 @@ use std::sync::atomic::AtomicUsize;
 pub mod disk;
 mod index;
 pub mod page;
+mod table;
 
 pub const PAGE_SIZE: usize = 4096;
 pub type PageId = usize;

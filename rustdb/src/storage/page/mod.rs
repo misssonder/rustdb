@@ -6,6 +6,7 @@ pub mod table;
 use crate::encoding::{Decoder, Encoder};
 use crate::error::{RustDBError, RustDBResult};
 use crate::storage::page::index::Node;
+use crate::storage::page::table::{Table, TableNode};
 use crate::storage::{AtomicPageId, PageId, PAGE_SIZE};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
@@ -60,20 +61,49 @@ impl Page {
     pub fn set_dirty(&self, is_dirty: bool) {
         self.is_dirty.store(is_dirty, Ordering::Relaxed);
     }
-
     pub async fn node<K>(&self) -> RustDBResult<Node<K>>
     where
         K: Decoder<Error = RustDBError>,
     {
-        let data = self.data_ref().read().await;
-        Node::decode(&mut data.as_ref())
+        self.decode().await
     }
 
-    pub async fn write_back<K>(&mut self, node: &Node<K>) -> RustDBResult<()>
+    pub async fn write_node_back<K>(&mut self, node: &Node<K>) -> RustDBResult<()>
     where
         K: Encoder<Error = RustDBError>,
     {
+        self.encode(node).await
+    }
+
+    pub async fn table(&self) -> RustDBResult<Table> {
+        self.decode().await
+    }
+
+    pub async fn write_table_back(&mut self, table: &Table) -> RustDBResult<()> {
+        self.encode(table).await
+    }
+
+    pub async fn table_node(&self) -> RustDBResult<TableNode> {
+        self.decode().await
+    }
+
+    pub async fn write_table_node_back(&mut self, table_node: &TableNode) -> RustDBResult<()> {
+        self.encode(table_node).await
+    }
+
+    async fn encode<T>(&mut self, t: &T) -> RustDBResult<()>
+    where
+        T: Encoder<Error = RustDBError>,
+    {
         let mut data = self.data_ref().write().await;
-        node.encode(&mut data.as_mut())
+        t.encode(&mut data.as_mut())
+    }
+
+    async fn decode<T>(&self) -> RustDBResult<T>
+    where
+        T: Decoder<Error = RustDBError>,
+    {
+        let data = self.data_ref().read().await;
+        T::decode(&mut data.as_ref())
     }
 }
