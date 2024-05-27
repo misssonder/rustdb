@@ -1,12 +1,16 @@
 use crate::error::RustDBError;
 
 use bytes::{Buf, BufMut};
+
 pub mod index;
 
 mod column;
 mod datatype;
+pub mod encoded_size;
 mod record_id;
 mod table;
+
+pub type EncoderVecLen = u32;
 
 pub trait Encoder: Sized {
     type Error;
@@ -26,7 +30,6 @@ pub trait Decoder: Sized {
 pub trait Nullable: Sized {
     fn null_value() -> Self;
 }
-
 macro_rules! impl_decoder {
     ($($ty:ty,$fn:ident);+$(;)?) => {
         $(impl Decoder for $ty {
@@ -51,14 +54,14 @@ macro_rules! impl_encoder {
             where
                 B: BufMut,
             {
-                buf.$fn(*self);
+                buf.$fn(*self as $ty);
                 Ok(())
             }
         })+
     };
 }
 
-macro_rules! impl_nullable_for_max {
+macro_rules! impl_nullable_as_max {
     ($($ty:ty);+$(;)?) => {
         $(impl Nullable for $ty  {
              fn null_value() -> Self{
@@ -98,7 +101,7 @@ impl_encoder! {
     f64, put_f64;
 }
 
-impl_nullable_for_max! {
+impl_nullable_as_max! {
     u8;
     u16;
     u32;
@@ -323,6 +326,43 @@ where
             None => max_value.encode(buf),
             Some(t) => t.encode(buf),
         }
+    }
+}
+
+impl<T> Decoder for Vec<T>
+where
+    T: Decoder<Error = RustDBError>,
+{
+    type Error = RustDBError;
+
+    fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
+    where
+        B: Buf,
+    {
+        let len = EncoderVecLen::decode(buf)?;
+        let mut output = Vec::with_capacity(len as usize);
+        for _ in 0..len {
+            output.push(T::decode(buf)?);
+        }
+        Ok(output)
+    }
+}
+
+impl<T> Encoder for Vec<T>
+where
+    T: Encoder<Error = RustDBError>,
+{
+    type Error = RustDBError;
+
+    fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
+    where
+        B: BufMut,
+    {
+        (self.len() as EncoderVecLen).encode(buf)?;
+        for data in self {
+            data.encode(buf)?;
+        }
+        Ok(())
     }
 }
 #[cfg(test)]

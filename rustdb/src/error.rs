@@ -1,3 +1,4 @@
+use crate::sql;
 use thiserror::Error;
 
 pub type RustDBResult<T> = Result<T, RustDBError>;
@@ -16,4 +17,6 @@ pub enum RustDBError {
     TryLock(#[from] tokio::sync::TryLockError),
     #[error("[Value]: {0}")]
     Value(String),
+    #[error("[Catalog]: {0}")]
+    Catalog(#[from] sql::catalog::error::Error),
 }

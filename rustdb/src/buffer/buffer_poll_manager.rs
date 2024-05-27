@@ -4,6 +4,7 @@ use crate::encoding::{Decoder, Encoder};
 use crate::error::{RustDBError, RustDBResult};
 use crate::storage::disk::disk_manager::DiskManager;
 use crate::storage::page::index::Node;
+use crate::storage::page::table::{Table, TableNode};
 use crate::storage::page::Page;
 use crate::storage::{PageId, PAGE_SIZE};
 use std::collections::{HashMap, VecDeque};
@@ -278,7 +279,49 @@ impl BufferPoolManager {
             .ok_or(RustDBError::BufferPool("Can't new page".into()))?;
         let page_id = page.page.page_id();
         node.set_page_id(page_id);
+        page.page.write_node_back(node).await?;
         Ok(page)
+    }
+
+    pub async fn new_page_table(&self, table: &mut Table) -> RustDBResult<PageRef> {
+        let page = self
+            .new_page_ref()
+            .await?
+            .ok_or(RustDBError::BufferPool("Can't new page".into()))?;
+        let page_id = page.page.page_id();
+        table.set_page_id(page_id);
+        page.page.write_table_back(table).await?;
+        Ok(page)
+    }
+    pub async fn fetch_page_table(&self, page_id: PageId) -> RustDBResult<(PageRef, Table)> {
+        let page = self
+            .fetch_page_ref(page_id)
+            .await?
+            .ok_or(RustDBError::BufferPool("Can't new page".into()))?;
+        let table = page.page.table().await?;
+        Ok((page, table))
+    }
+
+    pub async fn new_page_table_node(&self, table_node: &mut TableNode) -> RustDBResult<PageRef> {
+        let page = self
+            .new_page_ref()
+            .await?
+            .ok_or(RustDBError::BufferPool("Can't new page".into()))?;
+        let page_id = page.page.page_id();
+        table_node.set_page_id(page_id);
+        page.page.write_table_node_back(table_node).await?;
+        Ok(page)
+    }
+    pub async fn fetch_page_table_node(
+        &self,
+        page_id: PageId,
+    ) -> RustDBResult<(PageRef, TableNode)> {
+        let page = self
+            .fetch_page_ref(page_id)
+            .await?
+            .ok_or(RustDBError::BufferPool("Can't new page".into()))?;
+        let table_node = page.page.table_node().await?;
+        Ok((page, table_node))
     }
 }
 pub trait NodeTrait {
@@ -435,6 +478,9 @@ impl PageRef {
         }
     }
 
+    pub fn page(&self) -> &Arc<Page> {
+        &self.page
+    }
     pub fn page_id(&self) -> PageId {
         self.page.page_id()
     }

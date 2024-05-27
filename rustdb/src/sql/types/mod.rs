@@ -1,9 +1,10 @@
 pub(crate) mod expression;
 
+use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::fmt::{Formatter, Write};
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum DataType {
     Boolean,
     Tinyint,
@@ -30,7 +31,7 @@ impl std::fmt::Display for DataType {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Value {
     Null,
     Boolean(bool),
