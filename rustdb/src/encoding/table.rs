@@ -81,13 +81,10 @@ impl Decoder for Table {
     where
         B: Buf,
     {
-        let page_id = PageId::decode(buf)?;
-        let start = PageId::decode(buf)?;
-        let end = PageId::decode(buf)?;
         Ok(Self {
-            page_id,
-            start,
-            end,
+            page_id: PageId::decode(buf)?,
+            start: PageId::decode(buf)?,
+            end: PageId::decode(buf)?,
             columns: Vec::<ColumnDesc>::decode(buf)?,
         })
     }
@@ -120,7 +117,7 @@ impl EncodedSize for Table {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     use crate::sql::types::{DataType, Value};
     use crate::storage::PAGE_SIZE;
 
