@@ -2,7 +2,7 @@ use crate::encoding::encoded_size::EncodedSize;
 use crate::encoding::{Decoder, Encoder};
 use crate::error::RustDBError;
 use crate::sql::types::Value;
-use crate::storage::page::column::Column;
+use crate::storage::page::column::ColumnDesc;
 use crate::storage::page::table::{Table, TableNode, Tuple};
 use crate::storage::{PageId, RecordId};
 use bytes::{Buf, BufMut};
@@ -81,11 +81,14 @@ impl Decoder for Table {
     where
         B: Buf,
     {
+        let page_id = PageId::decode(buf)?;
+        let start = PageId::decode(buf)?;
+        let end = PageId::decode(buf)?;
         Ok(Self {
-            page_id: PageId::decode(buf)?,
-            start: PageId::decode(buf)?,
-            end: PageId::decode(buf)?,
-            columns: Vec::<Column>::decode(buf)?,
+            page_id,
+            start,
+            end,
+            columns: Vec::<ColumnDesc>::decode(buf)?,
         })
     }
 }
@@ -117,7 +120,7 @@ impl EncodedSize for Table {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sql::types::expression::Expression;
+    
     use crate::sql::types::{DataType, Value};
     use crate::storage::PAGE_SIZE;
 
@@ -128,15 +131,12 @@ mod tests {
             page_id: 1,
             start: 0,
             end: 1024,
-            columns: vec![Column {
+            columns: vec![ColumnDesc {
                 name: "id".to_string(),
                 datatype: DataType::Bigint,
                 primary_key: true,
                 nullable: Some(false),
-                default: Some(Expression::Add(
-                    Box::new(Expression::Const(Value::Integer(1))),
-                    Box::new(Expression::Const(Value::Integer(1))),
-                )),
+                default: Some(Value::Double(2.0)),
                 unique: true,
                 index: true,
                 references: Some("table_2".into()),
@@ -148,24 +148,7 @@ mod tests {
             buffer[table.encoded_size()..],
             [0; PAGE_SIZE][table.encoded_size()..]
         );
-        assert_eq!(
-            decoded,
-            Table {
-                page_id: 1,
-                start: 0,
-                end: 1024,
-                columns: vec![Column {
-                    name: "id".to_string(),
-                    datatype: DataType::Bigint,
-                    primary_key: true,
-                    nullable: Some(false),
-                    default: Some(Expression::Const(Value::Integer(2))),
-                    unique: true,
-                    index: true,
-                    references: Some("table_2".into()),
-                }],
-            }
-        )
+        assert_eq!(decoded, table)
     }
 
     #[test]
