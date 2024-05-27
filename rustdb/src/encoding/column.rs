@@ -1,31 +1,38 @@
 use crate::encoding::encoded_size::EncodedSize;
 use crate::encoding::{Decoder, Encoder};
 use crate::error::RustDBError;
-use crate::sql::types::expression::Expression;
-use crate::sql::types::DataType;
-use crate::storage::page::column::Column;
+use crate::sql::types::{DataType, Value};
+use crate::storage::page::column::ColumnDesc;
 use bytes::{Buf, BufMut};
 
-impl Decoder for Column {
+impl Decoder for ColumnDesc {
     type Error = RustDBError;
 
     fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
     where
         B: Buf,
     {
+        let name = String::decode(buf)?;
+        let datatype = DataType::decode(buf)?;
+        let primary_key = bool::decode(buf)?;
+        let nullable = Option::<bool>::decode(buf)?;
+        let default = Option::<Value>::decode(buf)?;
+        let unique = bool::decode(buf)?;
+        let index = bool::decode(buf)?;
+        let references = Option::<String>::decode(buf)?;
         Ok(Self {
-            name: String::decode(buf)?,
-            datatype: DataType::decode(buf)?,
-            primary_key: bool::decode(buf)?,
-            nullable: Option::<bool>::decode(buf)?,
-            default: Option::<Expression>::decode(buf)?,
-            unique: bool::decode(buf)?,
-            index: bool::decode(buf)?,
-            references: Option::<String>::decode(buf)?,
+            name,
+            datatype,
+            primary_key,
+            nullable,
+            default,
+            unique,
+            index,
+            references,
         })
     }
 }
-impl Encoder for Column {
+impl Encoder for ColumnDesc {
     type Error = RustDBError;
 
     fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
@@ -44,7 +51,7 @@ impl Encoder for Column {
     }
 }
 
-impl EncodedSize for Column {
+impl EncodedSize for ColumnDesc {
     fn encoded_size(&self) -> usize {
         self.name.encoded_size()
             + self.datatype.encoded_size()

@@ -1,5 +1,5 @@
 use crate::sql::types::Value;
-use crate::storage::page::column::Column;
+use crate::storage::page::column::ColumnDesc;
 use crate::storage::{PageId, RecordId};
 
 /// Table is List, it contains a bunch of pages which can be decoded into TableNode
@@ -12,11 +12,11 @@ pub struct Table {
     /// Last TableNode's page_id
     pub(crate) end: PageId,
     /// Columns
-    pub(crate) columns: Vec<Column>,
+    pub(crate) columns: Vec<ColumnDesc>,
 }
 
 impl Table {
-    pub fn new(page_id: PageId, columns: Vec<Column>, node_page_id: PageId) -> Self {
+    pub fn new(page_id: PageId, columns: Vec<ColumnDesc>, node_page_id: PageId) -> Self {
         Self {
             page_id,
             start: node_page_id,

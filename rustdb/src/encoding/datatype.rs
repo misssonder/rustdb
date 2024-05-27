@@ -1,7 +1,6 @@
 use crate::encoding::encoded_size::EncodedSize;
 use crate::encoding::{Decoder, Encoder};
 use crate::error::{RustDBError, RustDBResult};
-use crate::sql::types::expression::Expression;
 use crate::sql::types::{DataType, Value};
 use bytes::{Buf, BufMut};
 
@@ -199,7 +198,10 @@ impl Encoder for Option<Value> {
     {
         match self {
             None => basevalue::NONE_VALUE.encode(buf),
-            Some(val) => val.encode(buf),
+            Some(val) => {
+                basevalue::SOME_VALUE.encode(buf)?;
+                val.encode(buf)
+            },
         }
     }
 }
@@ -224,76 +226,6 @@ impl EncodedSize for Option<Value> {
             + match self {
                 None => 0,
                 Some(value) => value.encoded_size(),
-            }
-    }
-}
-
-impl Decoder for Expression {
-    type Error = RustDBError;
-    fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
-    where
-        B: Buf,
-    {
-        let expr = Expression::Const(Value::decode(buf)?);
-        Ok(expr)
-    }
-}
-
-impl Encoder for Expression {
-    type Error = RustDBError;
-
-    fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
-    where
-        B: BufMut,
-    {
-        self.evaluate()?.encode(buf)
-    }
-}
-
-impl EncodedSize for Expression {
-    fn encoded_size(&self) -> usize {
-        self.evaluate().expect("evaluate error").encoded_size()
-    }
-}
-
-impl Decoder for Option<Expression> {
-    type Error = RustDBError;
-
-    fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
-    where
-        B: Buf,
-    {
-        let null_value = u8::decode(buf)?;
-        Ok(match null_value {
-            basevalue::NONE_VALUE => None,
-            _ => Some(Expression::decode(buf)?),
-        })
-    }
-}
-
-impl Encoder for Option<Expression> {
-    type Error = RustDBError;
-
-    fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
-    where
-        B: BufMut,
-    {
-        match self {
-            None => basevalue::NONE_VALUE.encode(buf),
-            Some(expr) => {
-                basevalue::SOME_VALUE.encode(buf)?;
-                expr.encode(buf)
-            }
-        }
-    }
-}
-
-impl EncodedSize for Option<Expression> {
-    fn encoded_size(&self) -> usize {
-        basevalue::ENCODED_SIZE
-            + match self {
-                None => 0,
-                Some(expr) => expr.encoded_size(),
             }
     }
 }
@@ -323,31 +255,24 @@ mod tests {
         }
         {
             let mut buffer = [0; PAGE_SIZE];
-            let ty = Value::String("Hello world".into());
+            let ty = Value::Double(2.0);
             ty.encode(&mut buffer.as_mut()).unwrap();
             let decoded = Value::decode(&mut buffer[..ty.encoded_size()].as_ref()).unwrap();
             assert_eq!(decoded, ty)
         }
         {
             let mut buffer = [0; PAGE_SIZE];
-            let ty = Expression::Add(
-                Box::new(Expression::Const(Value::Integer(1))),
-                Box::new(Expression::Const(Value::Integer(1))),
-            );
+            let ty = Some(Value::Double(2.0));
             ty.encode(&mut buffer.as_mut()).unwrap();
-            let decoded = Expression::decode(&mut buffer[..ty.encoded_size()].as_ref()).unwrap();
-            assert_eq!(decoded, Expression::Const(Value::Integer(2)));
+            let decoded = Option::<Value>::decode(&mut buffer[..ty.encoded_size()].as_ref()).unwrap();
+            assert_eq!(decoded, ty)
         }
         {
             let mut buffer = [0; PAGE_SIZE];
-            let ty = Some(Expression::Add(
-                Box::new(Expression::Const(Value::Integer(1))),
-                Box::new(Expression::Const(Value::Integer(1))),
-            ));
+            let ty = Value::String("Hello world".into());
             ty.encode(&mut buffer.as_mut()).unwrap();
-            let decoded =
-                Option::<Expression>::decode(&mut buffer[..ty.encoded_size()].as_ref()).unwrap();
-            assert_eq!(decoded, Some(Expression::Const(Value::Integer(2))));
+            let decoded = Value::decode(&mut buffer[..ty.encoded_size()].as_ref()).unwrap();
+            assert_eq!(decoded, ty)
         }
     }
 }

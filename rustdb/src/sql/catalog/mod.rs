@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 mod column;
-pub mod error;
 pub mod scheme;
 mod table;
 
