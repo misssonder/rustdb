@@ -91,6 +91,7 @@ mod tests {
         assert_eq!(catalog.read_column_name("gender"), Some(&column_gender));
         assert_eq!(catalog.read_column(2), Some(&column_gender));
         assert_eq!(catalog.read_column(3), None);
+        assert_eq!(catalog.primary_keys(), vec![0, 2].as_slice());
         Ok(())
     }
 }
