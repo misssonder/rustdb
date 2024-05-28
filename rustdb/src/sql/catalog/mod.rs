@@ -2,10 +2,9 @@ use crate::sql::catalog::scheme::SchemaCatalog;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-mod column;
 pub mod error;
 pub mod scheme;
-mod table;
+pub mod table;
 
 pub type SchemaId = u32;
 pub type TableId = u32;

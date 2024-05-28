@@ -1,10 +1,16 @@
+use crate::sql::catalog::{ColumnId, TableId};
 use crate::sql::types::Value;
-use crate::storage::page::column::ColumnDesc;
-use crate::storage::{PageId, RecordId};
+use crate::storage::page::column::Column;
+use crate::storage::PageId;
+use std::collections::BTreeMap;
 
 /// Table is List, it contains a bunch of pages which can be decoded into TableNode
 #[derive(Debug, PartialEq)]
 pub struct Table {
+    /// Table Id
+    pub(crate) id: TableId,
+    /// Table name
+    pub(crate) name: String,
     /// This Table's page_id
     pub(crate) page_id: PageId,
     /// First TableNode's page_id
@@ -12,12 +18,20 @@ pub struct Table {
     /// Last TableNode's page_id
     pub(crate) end: PageId,
     /// Columns
-    pub(crate) columns: Vec<ColumnDesc>,
+    pub(crate) columns: Vec<Column>,
 }
 
 impl Table {
-    pub fn new(page_id: PageId, columns: Vec<ColumnDesc>, node_page_id: PageId) -> Self {
+    pub fn new(
+        id: TableId,
+        name: impl Into<String>,
+        page_id: PageId,
+        node_page_id: PageId,
+        columns: Vec<Column>,
+    ) -> Self {
         Self {
+            id,
+            name: name.into(),
             page_id,
             start: node_page_id,
             end: node_page_id,
@@ -39,6 +53,18 @@ impl Table {
 
     pub fn set_end(&mut self, page_id: PageId) {
         self.end = page_id
+    }
+
+    pub fn add_column(&mut self, column_id: ColumnId, column: Column) {
+        self.columns.insert(column_id as usize, column);
+    }
+    pub fn columns(&self) -> BTreeMap<ColumnId, Column> {
+        self.columns
+            .clone()
+            .into_iter()
+            .enumerate()
+            .map(|(id, column)| (id as ColumnId, column))
+            .collect()
     }
 }
 #[derive(Debug, PartialEq)]
@@ -78,14 +104,13 @@ impl TableNode {
 }
 #[derive(Debug, PartialEq)]
 pub struct Tuple {
-    pub(crate) record_id: RecordId,
     pub(crate) values: Vec<Value>,
 }
 
 pub type Tuples = Vec<Tuple>;
 
 impl Tuple {
-    pub fn new(record_id: RecordId, values: Vec<Value>) -> Self {
-        Self { record_id, values }
+    pub fn new(values: Vec<Value>) -> Self {
+        Self { values }
     }
 }
