@@ -875,7 +875,6 @@ mod tests {
 
     async fn test_index() -> RustDBResult<Index> {
         let f = tempfile::NamedTempFile::new()?;
-        println!("{:?}", f.path());
         let disk_manager = DiskManager::new(f.path()).await?;
         let buffer_pool_manager = BufferPoolManager::new(100, 2, disk_manager).await?;
         let index = Index::new::<u32>(buffer_pool_manager, 4).await?;

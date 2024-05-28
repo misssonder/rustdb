@@ -1,9 +1,9 @@
 use crate::sql::types::{DataType, Value};
 use serde::{Deserialize, Serialize};
-use std::fmt::{Display, Formatter, Write};
+use std::fmt::Write;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ColumnDesc {
+pub struct Column {
     pub name: String,
     pub datatype: DataType,
     pub primary_key: bool,
@@ -14,7 +14,7 @@ pub struct ColumnDesc {
     pub references: Option<String>,
 }
 
-impl ColumnDesc {
+impl Column {
     pub fn new(name: impl Into<String>, datatype: DataType) -> Self {
         Self {
             name: name.into(),
@@ -58,8 +58,15 @@ impl ColumnDesc {
         self
     }
 
-    pub fn with_references(mut self, references: String) -> Self {
-        self.references = Some(references);
+    pub fn with_references(mut self, references: impl Into<String>) -> Self {
+        self.references = Some(references.into());
         self
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    pub fn primary(&self) -> bool {
+        self.primary_key
     }
 }

@@ -1,10 +1,11 @@
 use crate::encoding::encoded_size::EncodedSize;
 use crate::encoding::{Decoder, Encoder};
 use crate::error::RustDBError;
+use crate::sql::catalog::TableId;
 use crate::sql::types::Value;
-use crate::storage::page::column::ColumnDesc;
+use crate::storage::page::column::Column;
 use crate::storage::page::table::{Table, TableNode, Tuple};
-use crate::storage::{PageId, RecordId};
+use crate::storage::PageId;
 use bytes::{Buf, BufMut};
 
 impl Decoder for Tuple {
@@ -15,7 +16,6 @@ impl Decoder for Tuple {
         B: Buf,
     {
         Ok(Self {
-            record_id: RecordId::decode(buf)?,
             values: Vec::<Value>::decode(buf)?,
         })
     }
@@ -28,7 +28,6 @@ impl Encoder for Tuple {
     where
         B: BufMut,
     {
-        self.record_id.encode(buf)?;
         self.values.encode(buf)?;
         Ok(())
     }
@@ -36,7 +35,7 @@ impl Encoder for Tuple {
 
 impl EncodedSize for Tuple {
     fn encoded_size(&self) -> usize {
-        self.record_id.encoded_size() + self.values.encoded_size()
+        self.values.encoded_size()
     }
 }
 
@@ -82,10 +81,12 @@ impl Decoder for Table {
         B: Buf,
     {
         Ok(Self {
+            id: TableId::decode(buf)?,
+            name: String::decode(buf)?,
             page_id: PageId::decode(buf)?,
             start: PageId::decode(buf)?,
             end: PageId::decode(buf)?,
-            columns: Vec::<ColumnDesc>::decode(buf)?,
+            columns: Vec::<Column>::decode(buf)?,
         })
     }
 }
@@ -97,6 +98,8 @@ impl Encoder for Table {
     where
         B: BufMut,
     {
+        self.id.encode(buf)?;
+        self.name.encode(buf)?;
         self.page_id.encode(buf)?;
         self.start.encode(buf)?;
         self.end.encode(buf)?;
@@ -107,7 +110,9 @@ impl Encoder for Table {
 
 impl EncodedSize for Table {
     fn encoded_size(&self) -> usize {
-        self.page_id.encoded_size()
+        self.id.encoded_size()
+            + self.name.encoded_size()
+            + self.page_id.encoded_size()
             + self.start.encoded_size()
             + self.end.encoded_size()
             + self.columns.encoded_size()
@@ -124,21 +129,19 @@ mod tests {
     #[test]
     fn encode_decode_table() {
         let mut buffer = [0; PAGE_SIZE];
-        let table = Table {
-            page_id: 1,
-            start: 0,
-            end: 1024,
-            columns: vec![ColumnDesc {
-                name: "id".to_string(),
-                datatype: DataType::Bigint,
-                primary_key: true,
-                nullable: Some(false),
-                default: Some(Value::Double(2.0)),
-                unique: true,
-                index: true,
-                references: Some("table_2".into()),
-            }],
-        };
+        let table = Table::new(
+            0,
+            "table_1",
+            1,
+            1,
+            vec![Column::new("id", DataType::Bigint)
+                .with_primary(true)
+                .with_nullable(false)
+                .with_default(Value::Double(2.0))
+                .with_unique(true)
+                .with_index(true)
+                .with_references("table_2")],
+        );
         table.encode(&mut buffer.as_mut()).unwrap();
         let decoded = Table::decode(&mut buffer[..table.encoded_size()].as_ref()).unwrap();
         assert_eq!(
@@ -154,18 +157,12 @@ mod tests {
         let table_node = TableNode {
             page_id: 256,
             next: None,
-            tuples: vec![Tuple {
-                record_id: RecordId {
-                    page_id: 512,
-                    slot_num: 36,
-                },
-                values: vec![
-                    Value::Null,
-                    Value::Bigint(1024),
-                    Value::String("Hello world".into()),
-                    Value::Double(0.5),
-                ],
-            }],
+            tuples: vec![Tuple::new(vec![
+                Value::Null,
+                Value::Bigint(1024),
+                Value::String("Hello world".into()),
+                Value::Double(0.5),
+            ])],
         };
         table_node.encode(&mut buffer.as_mut()).unwrap();
         assert_eq!(
