@@ -97,7 +97,10 @@ impl Table {
     }
 
     pub async fn table(&self) -> RustDBResult<(PageRef, page::table::Table)> {
-        self.buffer_pool.fetch_page_table(self.root).await
+        self.buffer_pool
+            .fetch_page_table(self.root)
+            .await
+            .map_err(Into::into)
     }
 
     pub async fn insert(&self, tuple: Tuple) -> RustDBResult<()> {
@@ -107,7 +110,10 @@ impl Table {
             self.last_node().await?
         };
         node.insert(tuple);
-        page.page().write_table_node_back(&node).await
+        page.page()
+            .write_table_node_back(&node)
+            .await
+            .map_err(Into::into)
     }
 
     pub fn primary_keys(&self) -> &[ColumnId] {
@@ -136,12 +142,14 @@ impl Table {
         self.buffer_pool
             .fetch_page_table_node(self.table().await?.1.start)
             .await
+            .map_err(Into::into)
     }
 
     async fn last_node(&self) -> RustDBResult<(PageRef, TableNode)> {
         self.buffer_pool
             .fetch_page_table_node(self.table().await?.1.end)
             .await
+            .map_err(Into::into)
     }
 
     async fn remaining_size(&self) -> RustDBResult<Option<usize>> {

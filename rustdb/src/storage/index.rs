@@ -1,8 +1,9 @@
+use crate::buffer;
 use crate::buffer::buffer_poll_manager::{
     BufferPoolManager, NodeTrait, OwnedPageDataReadGuard, OwnedPageDataWriteGuard,
 };
 use crate::encoding::{Decoder, Encoder};
-use crate::error::{RustDBError, RustDBResult};
+use crate::error::RustDBResult;
 use crate::storage::page::index::{Header, Internal, Leaf, Node};
 use crate::storage::{PageId, RecordId};
 use indexmap::IndexMap;
@@ -162,7 +163,7 @@ impl<'a> Index {
                     Some(next_id) => {
                         latch = match self.buffer_pool.try_fetch_page_read_owned(next_id).await {
                             Ok(latch) => latch,
-                            Err(RustDBError::TryLock(_)) => {
+                            Err(buffer::Error::TryLock(_)) => {
                                 break 'search;
                             }
                             Err(err) => break 'output Err(err),
@@ -611,7 +612,7 @@ impl<'a> Index {
                 .buffer_pool
                 .fetch_page_ref(page_id)
                 .await?
-                .ok_or(RustDBError::BufferPool("Can't fetch page".into()))?;
+                .ok_or(buffer::Error::BufferInsufficient)?;
             let (latch, node) = match route.option.action {
                 RouteAction::Search => {
                     let read_guard = page.data_read_owned().await;
@@ -684,7 +685,7 @@ impl<'a> Index {
                     .buffer_pool
                     .fetch_page_ref(page_id)
                     .await?
-                    .ok_or(RustDBError::BufferPool("Can't not fetch page".into()))?;
+                    .ok_or(buffer::Error::BufferInsufficient)?;
                 let node: Node<K> = page.data_read().await.node()?;
                 match node {
                     Node::Internal(internal) => {
@@ -800,8 +801,8 @@ impl Latch {
         K: Decoder,
     {
         match self {
-            Latch::Read(guard) => guard.node(),
-            Latch::Write(guard) => guard.node(),
+            Latch::Read(guard) => Ok(guard.node()?),
+            Latch::Write(guard) => Ok(guard.node()?),
         }
     }
 
@@ -869,6 +870,7 @@ impl<'a> RootLatch<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::{RustDBError, RustDBResult};
     use crate::storage::disk::disk_manager::DiskManager;
     use std::ops::RangeFull;
     use std::sync::Arc;
