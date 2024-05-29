@@ -53,7 +53,10 @@ impl TableCatalog {
     }
 
     pub async fn add_column(&mut self, column_id: ColumnId, column: Column) -> RustDBResult<()> {
-        self.table.add_column(column_id, column).await
+        self.table
+            .add_column(column_id, column)
+            .await
+            .map_err(Into::into)
     }
 }
 

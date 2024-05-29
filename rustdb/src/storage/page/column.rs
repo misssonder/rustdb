@@ -66,6 +66,7 @@ impl Column {
     pub fn name(&self) -> &str {
         &self.name
     }
+
     pub fn primary(&self) -> bool {
         self.primary_key
     }

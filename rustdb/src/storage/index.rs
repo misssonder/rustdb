@@ -3,9 +3,8 @@ use crate::buffer::buffer_poll_manager::{
     BufferPoolManager, NodeTrait, OwnedPageDataReadGuard, OwnedPageDataWriteGuard,
 };
 use crate::encoding::{Decoder, Encoder};
-use crate::error::RustDBResult;
 use crate::storage::page::index::{Header, Internal, Leaf, Node};
-use crate::storage::{PageId, RecordId};
+use crate::storage::{PageId, RecordId, StorageResult};
 use indexmap::IndexMap;
 use std::collections::Bound;
 use std::ops::{Deref, RangeBounds};
@@ -19,7 +18,7 @@ pub struct Index {
 }
 
 impl<'a> Index {
-    pub async fn new<K>(buffer_pool: BufferPoolManager, max_size: usize) -> RustDBResult<Self>
+    pub async fn new<K>(buffer_pool: BufferPoolManager, max_size: usize) -> StorageResult<Self>
     where
         K: Encoder,
     {
@@ -41,7 +40,7 @@ impl<'a> Index {
             max_size,
         })
     }
-    pub async fn search<K>(&self, key: &K) -> RustDBResult<Option<RecordId>>
+    pub async fn search<K>(&self, key: &K) -> StorageResult<Option<RecordId>>
     where
         K: Decoder + Encoder + Ord,
     {
@@ -60,7 +59,7 @@ impl<'a> Index {
         }
     }
 
-    pub async fn search_range<K, R>(&self, range: R) -> RustDBResult<Vec<RecordId>>
+    pub async fn search_range<K, R>(&self, range: R) -> StorageResult<Vec<RecordId>>
     where
         K: Decoder + Encoder + Ord,
         R: RangeBounds<K>,
@@ -175,7 +174,7 @@ impl<'a> Index {
         Ok(output)
     }
 
-    pub async fn insert<K>(&self, key: K, value: RecordId) -> RustDBResult<()>
+    pub async fn insert<K>(&self, key: K, value: RecordId) -> StorageResult<()>
     where
         K: Decoder + Encoder + Ord + Default + Clone,
     {
@@ -187,7 +186,7 @@ impl<'a> Index {
         self.insert_inner(page_id, route, key, value).await
     }
 
-    pub async fn delete<K>(&self, key: &K) -> RustDBResult<Option<(K, RecordId)>>
+    pub async fn delete<K>(&self, key: &K) -> StorageResult<Option<(K, RecordId)>>
     where
         K: Decoder + Encoder + Ord + Clone + Default,
     {
@@ -205,7 +204,7 @@ impl<'a> Index {
         mut route: Route<'_>,
         key: K,
         value: RecordId,
-    ) -> RustDBResult<()>
+    ) -> StorageResult<()>
     where
         K: Decoder + Encoder + Ord + Default + Clone,
     {
@@ -305,7 +304,7 @@ impl<'a> Index {
         mut page_id: PageId,
         mut route: Route<'_>,
         key: &K,
-    ) -> RustDBResult<Option<(K, RecordId)>>
+    ) -> StorageResult<Option<(K, RecordId)>>
     where
         K: Decoder + Encoder + Ord + Default + Clone,
     {
@@ -366,7 +365,7 @@ impl<'a> Index {
         parent_latch: &mut OwnedPageDataWriteGuard,
         latch: &mut OwnedPageDataWriteGuard,
         index: usize,
-    ) -> RustDBResult<Option<()>>
+    ) -> StorageResult<Option<()>>
     where
         K: Decoder + Encoder + Ord + Default + Clone,
     {
@@ -486,7 +485,7 @@ impl<'a> Index {
         latch: OwnedPageDataWriteGuard,
         root_latch: &mut Option<RootLatch<'a>>,
         index: usize,
-    ) -> RustDBResult<bool>
+    ) -> StorageResult<bool>
     where
         K: Encoder + Decoder + Clone + Ord,
     {
@@ -590,7 +589,7 @@ impl<'a> Index {
         &'a self,
         key: KeyCondition<&K>,
         route: &mut Route<'a>,
-    ) -> RustDBResult<PageId>
+    ) -> StorageResult<PageId>
     where
         K: Decoder + Encoder + Ord,
     {
@@ -666,7 +665,7 @@ impl<'a> Index {
     }
 
     #[cfg(test)]
-    pub(crate) async fn print<K>(&self) -> RustDBResult<()>
+    pub(crate) async fn print<K>(&self) -> StorageResult<()>
     where
         K: Decoder + std::fmt::Debug,
     {
@@ -796,7 +795,7 @@ enum Latch {
 }
 
 impl Latch {
-    fn node<K>(&self) -> RustDBResult<Node<K>>
+    fn node<K>(&self) -> StorageResult<Node<K>>
     where
         K: Decoder,
     {
@@ -870,12 +869,12 @@ impl<'a> RootLatch<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::{RustDBError, RustDBResult};
     use crate::storage::disk::disk_manager::DiskManager;
+    use crate::storage::{Error, StorageResult};
     use std::ops::RangeFull;
     use std::sync::Arc;
 
-    async fn test_index() -> RustDBResult<Index> {
+    async fn test_index() -> StorageResult<Index> {
         let f = tempfile::NamedTempFile::new()?;
         let disk_manager = DiskManager::new(f.path()).await?;
         let buffer_pool_manager = BufferPoolManager::new(100, 2, disk_manager).await?;
@@ -883,7 +882,7 @@ mod tests {
         Ok(index)
     }
 
-    async fn insert_inner(index: &Index, keys: &[u32]) -> RustDBResult<()> {
+    async fn insert_inner(index: &Index, keys: &[u32]) -> StorageResult<()> {
         for i in keys {
             index
                 .insert(
@@ -903,7 +902,7 @@ mod tests {
         index: Arc<Index>,
         len: usize,
         concurrency: usize,
-    ) -> RustDBResult<()> {
+    ) -> StorageResult<()> {
         let mut tasks = Vec::with_capacity(concurrency);
         let limit = len / concurrency;
         for i in 0..concurrency {
@@ -922,7 +921,7 @@ mod tests {
                         )
                         .await?;
                 }
-                Ok::<_, RustDBError>(())
+                Ok::<_, Error>(())
             });
             tasks.push(task);
         }
@@ -933,7 +932,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn find_route() -> RustDBResult<()> {
+    async fn find_route() -> StorageResult<()> {
         let index = test_index().await?;
         let len = 10000;
         let keys = (0..len).collect::<Vec<_>>();
@@ -959,7 +958,7 @@ mod tests {
         Ok(())
     }
     #[tokio::test]
-    async fn search_range() -> RustDBResult<()> {
+    async fn search_range() -> StorageResult<()> {
         let index = test_index().await?;
         let keys = (1..1000).collect::<Vec<_>>();
         insert_inner(&index, &keys.iter().rev().copied().collect::<Vec<_>>()).await?;
@@ -1000,7 +999,7 @@ mod tests {
         Ok(())
     }
     #[tokio::test]
-    async fn insert() -> RustDBResult<()> {
+    async fn insert() -> StorageResult<()> {
         let keys: Vec<u32> = (1..100).collect::<Vec<_>>();
         let index = test_index().await?;
         insert_inner(&index, &keys.iter().copied().rev().collect::<Vec<_>>()).await?;
@@ -1014,7 +1013,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delete() -> RustDBResult<()> {
+    async fn delete() -> StorageResult<()> {
         let keys: Vec<u32> = (1..100).collect::<Vec<_>>();
         let index = test_index().await?;
         insert_inner(&index, &keys.iter().copied().rev().collect::<Vec<_>>()).await?;
@@ -1039,7 +1038,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn search_concurrency() -> RustDBResult<()> {
+    async fn search_concurrency() -> StorageResult<()> {
         let index = Arc::new(test_index().await?);
         let len = 10000;
         let concurrency = 1;
@@ -1056,7 +1055,7 @@ mod tests {
                     assert!(val.is_some());
                     assert_eq!(i as u32, val.unwrap().page_id as u32);
                 }
-                Ok::<_, RustDBError>(())
+                Ok::<_, Error>(())
             });
             tasks.push(task);
         }
@@ -1067,7 +1066,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn search_range_concurrency() -> RustDBResult<()> {
+    async fn search_range_concurrency() -> StorageResult<()> {
         let len = 1000;
         let concurrency = 10;
         let index = Arc::new(test_index().await?);
@@ -1083,7 +1082,7 @@ mod tests {
                     let val = index_clone.search_range(0..=len as u32).await?;
                     assert!(!val.is_empty());
                 }
-                Ok::<_, RustDBError>(())
+                Ok::<_, Error>(())
             });
             search_tasks.push(task);
         }
@@ -1100,7 +1099,7 @@ mod tests {
         Ok(())
     }
     #[tokio::test]
-    async fn insert_concurrency() -> RustDBResult<()> {
+    async fn insert_concurrency() -> StorageResult<()> {
         let len = 10000;
         let concurrency = 10;
         let index = Arc::new(test_index().await?);
@@ -1116,7 +1115,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delete_concurrency() -> RustDBResult<()> {
+    async fn delete_concurrency() -> StorageResult<()> {
         let len = 10000;
         let concurrency = 10;
         let index = Arc::new(test_index().await?);
@@ -1134,7 +1133,7 @@ mod tests {
                     assert!(val.is_some());
                     assert_eq!(val.unwrap().1.page_id, i);
                 }
-                Ok::<_, RustDBError>(())
+                Ok::<_, Error>(())
             });
             tasks.push(task);
         }

@@ -1,4 +1,4 @@
-use crate::{buffer, catalog, encoding};
+use crate::{buffer, catalog, encoding, storage};
 use thiserror::Error;
 
 pub type RustDBResult<T> = Result<T, RustDBError>;
@@ -17,4 +17,6 @@ pub enum RustDBError {
     Value(String),
     #[error("[Catalog]: {0}")]
     Catalog(#[from] catalog::error::Error),
+    #[error("[Storage]: {0}")]
+    Storage(#[from] storage::Error),
 }
