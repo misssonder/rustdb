@@ -1,5 +1,5 @@
-use crate::sql::catalog::table::TableCatalog;
-use crate::sql::catalog::{SchemaId, TableId};
+use crate::catalog::table::TableCatalog;
+use crate::catalog::{SchemaId, TableId};
 use std::collections::HashMap;
 use std::sync::Arc;
 

@@ -484,8 +484,7 @@ mod tests {
     use super::*;
     use crate::encoding;
     use crate::encoding::{Decoder, Encoder};
-    use crate::error::RustDBResult;
-    use crate::storage::PAGE_SIZE;
+    use crate::storage::{StorageResult, PAGE_SIZE};
     use bytes::{Buf, BufMut};
 
     #[derive(PartialEq, Debug)]
@@ -515,7 +514,7 @@ mod tests {
     }
 
     #[test]
-    fn test_header_decode_encode() -> RustDBResult<()> {
+    fn test_header_decode_encode() -> StorageResult<()> {
         let header = Header {
             size: 1,
             max_size: 2,
@@ -534,7 +533,7 @@ mod tests {
     }
 
     #[test]
-    fn test_internal_decode_encode() -> RustDBResult<()> {
+    fn test_internal_decode_encode() -> StorageResult<()> {
         let len = 100;
         let mut kv = Vec::with_capacity(len);
         for i in 0..len {
@@ -563,7 +562,7 @@ mod tests {
     }
 
     #[test]
-    fn test_leaf_decode_encode() -> RustDBResult<()> {
+    fn test_leaf_decode_encode() -> StorageResult<()> {
         let len = 100;
         let mut kv = Vec::with_capacity(len);
         for i in 0..len {

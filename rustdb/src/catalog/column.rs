@@ -1,9 +1,10 @@
+use crate::catalog::{ColumnId, TableId};
 use crate::sql::types::{DataType, Value};
 use serde::{Deserialize, Serialize};
-use std::fmt::Write;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Column {
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ColumnCatalog {
+    pub id: ColumnId,
     pub name: String,
     pub datatype: DataType,
     pub primary_key: bool,
@@ -14,9 +15,10 @@ pub struct Column {
     pub references: Option<String>,
 }
 
-impl Column {
-    pub fn new(name: impl Into<String>, datatype: DataType) -> Self {
+impl ColumnCatalog {
+    pub fn new<T: Into<String>>(id: TableId, name: T, datatype: DataType) -> Self {
         Self {
+            id,
             name: name.into(),
             datatype,
             primary_key: false,
@@ -26,6 +28,22 @@ impl Column {
             index: false,
             references: None,
         }
+    }
+
+    pub fn id(&self) -> ColumnId {
+        self.id
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn primary(&self) -> bool {
+        self.primary_key
+    }
+
+    pub fn set_id(&mut self, id: ColumnId) {
+        self.id = id
     }
 
     pub fn with_datatye(mut self, datatype: DataType) -> Self {
@@ -61,13 +79,5 @@ impl Column {
     pub fn with_references(mut self, references: impl Into<String>) -> Self {
         self.references = Some(references.into());
         self
-    }
-
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub fn primary(&self) -> bool {
-        self.primary_key
     }
 }

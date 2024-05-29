@@ -1,8 +1,9 @@
-use crate::error::RustDBResult;
-use crate::sql::catalog::TableRefId;
+use crate::catalog::TableRefId;
 use crate::storage::page::column::Column;
+use crate::{buffer, encoding};
 use std::future::Future;
 use std::sync::atomic::AtomicUsize;
+use thiserror::Error;
 
 pub mod disk;
 mod index;
@@ -28,9 +29,20 @@ pub trait Engine {
         id: TableRefId,
         name: &str,
         columns: &[Column],
-    ) -> impl Future<Output = RustDBResult<()>> + Send;
+    ) -> impl Future<Output = StorageResult<()>> + Send;
 
-    fn read_table(&self, id: TableRefId) -> impl Future<Output = RustDBResult<Self::Table>>;
+    fn read_table(&self, id: TableRefId) -> impl Future<Output = StorageResult<Self::Table>>;
 
-    fn delete_tale(&self, id: TableRefId) -> impl Future<Output = RustDBResult<()>>;
+    fn delete_tale(&self, id: TableRefId) -> impl Future<Output = StorageResult<()>>;
+}
+
+pub type StorageResult<T> = Result<T, Error>;
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("buffer error {0}")]
+    Buffer(#[from] buffer::Error),
+    #[error("encoding error {0}")]
+    Encoding(#[from] encoding::error::Error),
+    #[error("io error: {0}")]
+    IO(#[from] std::io::Error),
 }
