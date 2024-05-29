@@ -1,13 +1,11 @@
 use crate::encoding::encoded_size::EncodedSize;
+use crate::encoding::error::Error;
 use crate::encoding::{Decoder, Encoder};
-use crate::error::RustDBError;
 use crate::storage::{PageId, RecordId};
 use bytes::{Buf, BufMut};
 
 impl Decoder for RecordId {
-    type Error = RustDBError;
-
-    fn decode<B>(buffer: &mut B) -> Result<Self, Self::Error>
+    fn decode<B>(buffer: &mut B) -> Result<Self, Error>
     where
         B: Buf,
     {
@@ -19,9 +17,7 @@ impl Decoder for RecordId {
 }
 
 impl Encoder for RecordId {
-    type Error = RustDBError;
-
-    fn encode<B>(&self, buffer: &mut B) -> Result<(), Self::Error>
+    fn encode<B>(&self, buffer: &mut B) -> Result<(), Error>
     where
         B: BufMut,
     {

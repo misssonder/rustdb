@@ -1,6 +1,6 @@
 use crate::encoding::encoded_size::EncodedSize;
+use crate::encoding::error::Error;
 use crate::encoding::{Decoder, Encoder};
-use crate::error::RustDBError;
 use crate::sql::catalog::TableId;
 use crate::sql::types::Value;
 use crate::storage::page::column::Column;
@@ -9,9 +9,7 @@ use crate::storage::PageId;
 use bytes::{Buf, BufMut};
 
 impl Decoder for Tuple {
-    type Error = RustDBError;
-
-    fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
+    fn decode<B>(buf: &mut B) -> Result<Self, Error>
     where
         B: Buf,
     {
@@ -22,9 +20,7 @@ impl Decoder for Tuple {
 }
 
 impl Encoder for Tuple {
-    type Error = RustDBError;
-
-    fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
+    fn encode<B>(&self, buf: &mut B) -> Result<(), Error>
     where
         B: BufMut,
     {
@@ -40,9 +36,7 @@ impl EncodedSize for Tuple {
 }
 
 impl Decoder for TableNode {
-    type Error = RustDBError;
-
-    fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
+    fn decode<B>(buf: &mut B) -> Result<Self, Error>
     where
         B: Buf,
     {
@@ -54,9 +48,7 @@ impl Decoder for TableNode {
     }
 }
 impl Encoder for TableNode {
-    type Error = RustDBError;
-
-    fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
+    fn encode<B>(&self, buf: &mut B) -> Result<(), Error>
     where
         B: BufMut,
     {
@@ -74,9 +66,7 @@ impl EncodedSize for TableNode {
 }
 
 impl Decoder for Table {
-    type Error = RustDBError;
-
-    fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
+    fn decode<B>(buf: &mut B) -> Result<Self, Error>
     where
         B: Buf,
     {
@@ -92,9 +82,7 @@ impl Decoder for Table {
 }
 
 impl Encoder for Table {
-    type Error = RustDBError;
-
-    fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
+    fn encode<B>(&self, buf: &mut B) -> Result<(), Error>
     where
         B: BufMut,
     {

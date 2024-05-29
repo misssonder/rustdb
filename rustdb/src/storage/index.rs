@@ -20,7 +20,7 @@ pub struct Index {
 impl<'a> Index {
     pub async fn new<K>(buffer_pool: BufferPoolManager, max_size: usize) -> RustDBResult<Self>
     where
-        K: Encoder<Error = RustDBError>,
+        K: Encoder,
     {
         let mut node = Node::Leaf(Leaf::<K> {
             header: Header {
@@ -42,7 +42,7 @@ impl<'a> Index {
     }
     pub async fn search<K>(&self, key: &K) -> RustDBResult<Option<RecordId>>
     where
-        K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord,
+        K: Decoder + Encoder + Ord,
     {
         let mut route = Route::new(RouteOption::default());
         let page_id = self
@@ -61,7 +61,7 @@ impl<'a> Index {
 
     pub async fn search_range<K, R>(&self, range: R) -> RustDBResult<Vec<RecordId>>
     where
-        K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord,
+        K: Decoder + Encoder + Ord,
         R: RangeBounds<K>,
     {
         let output = 'output: loop {
@@ -176,7 +176,7 @@ impl<'a> Index {
 
     pub async fn insert<K>(&self, key: K, value: RecordId) -> RustDBResult<()>
     where
-        K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord + Default + Clone,
+        K: Decoder + Encoder + Ord + Default + Clone,
     {
         let option = RouteOption::default().with_action(RouteAction::Insert);
         let mut route = Route::new(option);
@@ -188,7 +188,7 @@ impl<'a> Index {
 
     pub async fn delete<K>(&self, key: &K) -> RustDBResult<Option<(K, RecordId)>>
     where
-        K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord + Clone + Default,
+        K: Decoder + Encoder + Ord + Clone + Default,
     {
         let option = RouteOption::default().with_action(RouteAction::Delete);
         let mut route = Route::new(option);
@@ -206,7 +206,7 @@ impl<'a> Index {
         value: RecordId,
     ) -> RustDBResult<()>
     where
-        K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord + Default + Clone,
+        K: Decoder + Encoder + Ord + Default + Clone,
     {
         loop {
             let mut latch = route
@@ -306,7 +306,7 @@ impl<'a> Index {
         key: &K,
     ) -> RustDBResult<Option<(K, RecordId)>>
     where
-        K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord + Default + Clone,
+        K: Decoder + Encoder + Ord + Default + Clone,
     {
         let mut res = None;
         loop {
@@ -367,7 +367,7 @@ impl<'a> Index {
         index: usize,
     ) -> RustDBResult<Option<()>>
     where
-        K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord + Default + Clone,
+        K: Decoder + Encoder + Ord + Default + Clone,
     {
         let mut parent: Internal<K> = parent_latch.node()?.assume_internal();
         let node: Node<K> = latch.node()?;
@@ -487,7 +487,7 @@ impl<'a> Index {
         index: usize,
     ) -> RustDBResult<bool>
     where
-        K: Encoder<Error = RustDBError> + Decoder<Error = RustDBError> + Clone + Ord,
+        K: Encoder + Decoder + Clone + Ord,
     {
         let mut parent: Internal<K> = parent_latch.node()?.assume_internal();
         let node: Node<K> = latch.node()?;
@@ -591,7 +591,7 @@ impl<'a> Index {
         route: &mut Route<'a>,
     ) -> RustDBResult<PageId>
     where
-        K: Decoder<Error = RustDBError> + Encoder<Error = RustDBError> + Ord,
+        K: Decoder + Encoder + Ord,
     {
         let root_latch = match route.option.action {
             RouteAction::Search => {
@@ -667,7 +667,7 @@ impl<'a> Index {
     #[cfg(test)]
     pub(crate) async fn print<K>(&self) -> RustDBResult<()>
     where
-        K: Decoder<Error = RustDBError> + std::fmt::Debug,
+        K: Decoder + std::fmt::Debug,
     {
         let mut pages = std::collections::VecDeque::new();
         let page_id = self.root.read().await;
@@ -797,7 +797,7 @@ enum Latch {
 impl Latch {
     fn node<K>(&self) -> RustDBResult<Node<K>>
     where
-        K: Decoder<Error = RustDBError>,
+        K: Decoder,
     {
         match self {
             Latch::Read(guard) => guard.node(),
