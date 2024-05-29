@@ -1,5 +1,5 @@
+use crate::catalog::TableRefId;
 use crate::error::RustDBResult;
-use crate::sql::catalog::TableRefId;
 use crate::storage::page::column::Column;
 use std::future::Future;
 use std::sync::atomic::AtomicUsize;

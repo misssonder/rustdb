@@ -1,7 +1,7 @@
 use crate::buffer::buffer_poll_manager::{BufferPoolManager, PageRef};
+use crate::catalog::{ColumnId, TableId};
 use crate::encoding::encoded_size::EncodedSize;
 use crate::error::RustDBResult;
-use crate::sql::catalog::{ColumnId, TableId};
 use crate::storage::page::column::Column;
 use crate::storage::page::table::{TableNode, Tuple};
 use crate::storage::{page, PageId};

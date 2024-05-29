@@ -1,6 +1,6 @@
 use crate::buffer::buffer_poll_manager::BufferPoolManager;
+use crate::catalog::{ColumnId, TableId};
 use crate::error::RustDBResult;
-use crate::sql::catalog::{ColumnId, TableId};
 use crate::storage::page::column::Column;
 use crate::storage::table::Table;
 use std::collections::BTreeMap;

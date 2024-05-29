@@ -1,4 +1,4 @@
-use crate::sql::catalog::scheme::SchemaCatalog;
+use crate::catalog::scheme::SchemaCatalog;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

@@ -1,4 +1,4 @@
-use crate::sql::catalog::{ColumnId, TableId};
+use crate::catalog::{ColumnId, TableId};
 use crate::sql::types::Value;
 use crate::storage::page::column::Column;
 use crate::storage::PageId;

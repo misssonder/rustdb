@@ -1,7 +1,7 @@
+use crate::catalog::TableId;
 use crate::encoding::encoded_size::EncodedSize;
 use crate::encoding::error::Error;
 use crate::encoding::{Decoder, Encoder};
-use crate::sql::catalog::TableId;
 use crate::sql::types::Value;
 use crate::storage::page::column::Column;
 use crate::storage::page::table::{Table, TableNode, Tuple};
