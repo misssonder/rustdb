@@ -1,62 +1,82 @@
-use crate::buffer::buffer_poll_manager::BufferPoolManager;
+use crate::catalog::column::ColumnCatalog;
+use crate::catalog::error::Error;
 use crate::catalog::{ColumnId, TableId};
-use crate::error::RustDBResult;
-use crate::storage::page::column::Column;
-use crate::storage::table::Table;
-use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::collections::{BTreeMap, HashMap};
 
 pub struct TableCatalog {
-    table: Table,
+    id: TableId,
+    name: String,
+    column_idxs: HashMap<String, ColumnId>,
+    columns: BTreeMap<ColumnId, ColumnCatalog>,
+    /// Primary keys
+    primary_keys: Vec<ColumnId>,
 }
 
 impl TableCatalog {
-    pub async fn new(
-        table_id: TableId,
-        name: impl Into<String> + Clone,
-        columns: Vec<Column>,
-        buffer_pool: Arc<BufferPoolManager>,
-    ) -> RustDBResult<Self> {
-        let table_catalog = Self {
-            table: Table::new(table_id, name, columns.clone(), buffer_pool.clone()).await?,
+    pub fn new<T: Into<String>>(
+        id: TableId,
+        name: T,
+        columns: Vec<ColumnCatalog>,
+    ) -> Result<Self, Error> {
+        let mut table_catalog = Self {
+            id,
+            name: name.into(),
+            column_idxs: Default::default(),
+            columns: Default::default(),
+            primary_keys: Vec::new(),
         };
+        for column in columns {
+            table_catalog.add_column(column)?;
+        }
         Ok(table_catalog)
     }
 
-    pub fn read_column(&self, column_id: ColumnId) -> Option<&Column> {
-        self.table.read_column(column_id)
-    }
-
-    pub fn read_column_name(&self, column_name: &str) -> Option<&Column> {
-        self.table.read_column_name(column_name)
-    }
-
-    pub fn read_column_id(&self, column_name: &str) -> Option<ColumnId> {
-        self.table.read_column_id(column_name)
-    }
-
-    pub fn columns(&self) -> BTreeMap<ColumnId, Column> {
-        self.table
-            .columns()
-            .iter()
-            .enumerate()
-            .map(|(id, column)| (id as ColumnId, column.clone()))
-            .collect()
-    }
-
     pub fn name(&self) -> &str {
-        self.table.name()
+        &self.name
     }
 
     pub fn primary_keys(&self) -> &[ColumnId] {
-        self.table.primary_keys()
+        self.primary_keys.as_slice()
     }
 
-    pub async fn add_column(&mut self, column_id: ColumnId, column: Column) -> RustDBResult<()> {
-        self.table
-            .add_column(column_id, column)
-            .await
-            .map_err(Into::into)
+    pub fn read_column(&self, name: &str) -> Option<&ColumnCatalog> {
+        self.read_id_by_name(name)
+            .and_then(|id| self.read_column_by_id(id))
+    }
+
+    pub fn read_column_by_id(&self, column_id: ColumnId) -> Option<&ColumnCatalog> {
+        self.columns.get(&column_id)
+    }
+
+    pub fn read_id_by_name(&self, name: &str) -> Option<ColumnId> {
+        self.column_idxs.get(name).copied()
+    }
+
+    fn add_column(&mut self, mut column: ColumnCatalog) -> Result<(), Error> {
+        if self.contain_column(column.name()) {
+            return Err(Error::Duplicated("column", column.name().to_string()));
+        }
+        let column_id = self.next_column_id();
+        column.set_id(column_id);
+
+        self.column_idxs
+            .insert(column.name().to_string(), column_id);
+        if column.primary() {
+            self.primary_keys.push(column_id);
+            self.primary_keys.sort();
+        }
+        self.columns.insert(column_id, column);
+        Ok(())
+    }
+
+    fn next_column_id(&mut self) -> ColumnId {
+        let id = self.id;
+        self.id += 1;
+        id
+    }
+
+    fn contain_column(&self, name: &str) -> bool {
+        self.read_id_by_name(name).is_some()
     }
 }
 
@@ -64,36 +84,27 @@ impl TableCatalog {
 mod tests {
     use super::*;
     use crate::sql::types::{DataType, Value};
-    use crate::storage::disk::disk_manager::DiskManager;
-    use crate::storage::page::column::Column;
 
     #[tokio::test]
-    async fn table_catalog() -> RustDBResult<()> {
-        let f = tempfile::NamedTempFile::new()?;
-        let disk_manager = DiskManager::new(f.path()).await?;
-        let buffer_manager = BufferPoolManager::new(100, 2, disk_manager).await?;
-        let column_id = Column::new("id", DataType::Bigint).with_primary(true);
-        let column_name =
-            Column::new("name", DataType::String).with_default(Value::String("hello".to_string()));
-        let column_gender = Column::new("gender", DataType::Boolean).with_primary(true);
-        let mut catalog = TableCatalog::new(
-            0,
-            "store",
-            vec![column_id.clone(), column_name.clone()],
-            Arc::new(buffer_manager),
-        )
-        .await?;
+    async fn table_catalog() -> Result<(), Error> {
+        let column_id = ColumnCatalog::new(0, "id", DataType::Bigint).with_primary(true);
+        let column_name = ColumnCatalog::new(1, "name", DataType::String)
+            .with_default(Value::String("hello".to_string()));
+        let column_gender = ColumnCatalog::new(2, "gender", DataType::Boolean).with_primary(true);
+        let mut catalog =
+            TableCatalog::new(0, "store", vec![column_id.clone(), column_name.clone()])?;
         assert_eq!(catalog.primary_keys(), vec![0]);
         assert_eq!(catalog.name(), "store");
-        assert_eq!(catalog.read_column_name("id"), Some(&column_id));
-        assert_eq!(catalog.read_column_name("name"), Some(&column_name));
-        assert_eq!(catalog.read_column_name("name_id"), None);
-        assert_eq!(catalog.read_column_name("gender"), None);
-        assert_eq!(catalog.read_column(2), None);
-        catalog.add_column(2, column_gender.clone()).await?;
-        assert_eq!(catalog.read_column_name("gender"), Some(&column_gender));
-        assert_eq!(catalog.read_column(2), Some(&column_gender));
-        assert_eq!(catalog.read_column(3), None);
+        assert_eq!(catalog.read_column("id"), Some(&column_id));
+        assert_eq!(catalog.read_column("name"), Some(&column_name));
+        assert_eq!(catalog.read_column("name_id"), None);
+        assert_eq!(catalog.read_column("gender"), None);
+        assert_eq!(catalog.read_column_by_id(2), None);
+        catalog.add_column(column_gender.clone())?;
+        assert!(catalog.add_column(column_gender.clone()).is_err());
+        assert_eq!(catalog.read_column("gender"), Some(&column_gender));
+        assert_eq!(catalog.read_column_by_id(2), Some(&column_gender));
+        assert_eq!(catalog.read_column_by_id(3), None);
         assert_eq!(catalog.primary_keys(), vec![0, 2].as_slice());
         Ok(())
     }

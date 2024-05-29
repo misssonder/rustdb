@@ -2,6 +2,7 @@ use crate::catalog::scheme::SchemaCatalog;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+mod column;
 pub mod error;
 pub mod scheme;
 pub mod table;

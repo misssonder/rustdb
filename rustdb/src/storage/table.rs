@@ -1,25 +1,18 @@
 use crate::buffer::buffer_poll_manager::{BufferPoolManager, PageRef};
-use crate::catalog::{ColumnId, TableId};
 use crate::encoding::encoded_size::EncodedSize;
 use crate::storage::page::column::Column;
 use crate::storage::page::table::{TableNode, Tuple};
 use crate::storage::{page, PageId, StorageResult};
-use std::collections::HashMap;
 use std::sync::Arc;
 
 pub struct Table {
     name: String,
     buffer_pool: Arc<BufferPoolManager>,
     root: PageId,
-    column_idxs: HashMap<String, ColumnId>,
-    columns: Vec<Column>,
-    /// Primary keys
-    primary_keys: Vec<ColumnId>,
 }
 
 impl Table {
     pub async fn new<T: Into<String> + Clone>(
-        id: TableId,
         name: T,
         columns: Vec<Column>,
         buffer_pool: Arc<BufferPoolManager>,
@@ -32,30 +25,10 @@ impl Table {
         table_heap.set_end(table_node.page_id());
         buffer_pool.new_page_table(&mut table_heap).await?;
 
-        let column_idxs = columns
-            .iter()
-            .enumerate()
-            .map(|(id, column)| (column.name().to_string(), id as ColumnId))
-            .collect();
-        let primary_keys = columns
-            .iter()
-            .enumerate()
-            .filter_map(|(id, column)| {
-                if column.primary() {
-                    Some(id as ColumnId)
-                } else {
-                    None
-                }
-            })
-            .collect();
-
         Ok(Self {
             name: name.into(),
             buffer_pool,
             root: table_heap.page_id(),
-            column_idxs,
-            columns,
-            primary_keys,
         })
     }
 
@@ -63,35 +36,21 @@ impl Table {
         &self.name
     }
 
-    pub fn read_column(&self, column_id: ColumnId) -> Option<&Column> {
-        self.columns.get(column_id as usize)
+    pub async fn columns(&self) -> StorageResult<Vec<Column>> {
+        Ok(self.table().await?.1.columns)
     }
 
-    pub fn read_column_name(&self, column_name: &str) -> Option<&Column> {
-        self.column_idxs
-            .get(column_name)
-            .and_then(|column_id| self.read_column(*column_id))
-    }
-
-    pub fn read_column_id(&self, column_name: &str) -> Option<ColumnId> {
-        self.column_idxs.get(column_name).copied()
-    }
-
-    pub fn columns(&self) -> &[Column] {
-        &self.columns
-    }
-
-    pub async fn add_column(&mut self, column_id: ColumnId, column: Column) -> StorageResult<()> {
+    pub async fn push_column(&mut self, column: Column) -> StorageResult<()> {
         let (page, mut table) = self.table().await?;
-        table.add_column(column_id, column.clone());
+        table.push_column(column);
         page.page().write_table_back(&table).await?;
-        if column.primary_key {
-            self.primary_keys.push(column_id);
-            self.primary_keys.sort();
-        }
-        self.column_idxs
-            .insert(column.name().to_string(), column_id);
-        self.columns.insert(column_id as usize, column);
+        Ok(())
+    }
+
+    pub async fn insert_column(&mut self, index: usize, column: Column) -> StorageResult<()> {
+        let (page, mut table) = self.table().await?;
+        table.insert_column(index, column);
+        page.page().write_table_back(&table).await?;
         Ok(())
     }
 
@@ -113,10 +72,6 @@ impl Table {
             .write_table_node_back(&node)
             .await
             .map_err(Into::into)
-    }
-
-    pub fn primary_keys(&self) -> &[ColumnId] {
-        self.primary_keys.as_slice()
     }
 
     async fn add_node(&self) -> StorageResult<(PageRef, TableNode)> {
@@ -159,5 +114,41 @@ impl Table {
     async fn has_remaining(&self, tuple: &Tuple) -> StorageResult<bool> {
         let (_, node) = self.last_node().await?;
         Ok(node.encoded_size() + tuple.encoded_size() > node.total_size())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sql::types::{DataType, Value};
+    use crate::storage::disk::disk_manager::DiskManager;
+
+    #[tokio::test]
+    async fn table() -> StorageResult<()> {
+        let f = tempfile::NamedTempFile::new()?;
+        let disk_manager = DiskManager::new(f.path()).await?;
+        let buffer_manager = BufferPoolManager::new(100, 2, disk_manager).await?;
+
+        let column_id = Column::new("id", DataType::Bigint).with_primary(true);
+        let column_name =
+            Column::new("name", DataType::String).with_default(Value::String("hello".to_string()));
+        let column_gender = Column::new("gender", DataType::Boolean).with_primary(true);
+        let mut table = Table::new(
+            "user",
+            vec![column_id.clone(), column_name.clone()],
+            Arc::new(buffer_manager),
+        )
+        .await?;
+        assert_eq!(table.name(), "user");
+        assert_eq!(table.columns().await?.len(), 2);
+        assert_eq!(
+            table.columns().await?,
+            vec![column_id.clone(), column_name.clone()]
+        );
+        for _ in 0..10 {
+            table.push_column(column_gender.clone()).await?;
+        }
+        assert_eq!(table.columns().await?.len(), 12);
+        Ok(())
     }
 }

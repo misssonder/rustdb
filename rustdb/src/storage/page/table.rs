@@ -51,9 +51,14 @@ impl Table {
         self.end = page_id
     }
 
-    pub fn add_column(&mut self, column_id: ColumnId, column: Column) {
-        self.columns.insert(column_id as usize, column);
+    pub fn push_column(&mut self, column: Column) {
+        self.columns.push(column);
     }
+
+    pub fn insert_column(&mut self, index: usize, column: Column) {
+        self.columns.insert(index, column);
+    }
+
     pub fn columns(&self) -> BTreeMap<ColumnId, Column> {
         self.columns
             .clone()
