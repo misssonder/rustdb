@@ -1,12 +1,12 @@
-use crate::{encoding, sql};
+use crate::{buffer, encoding, sql};
 use thiserror::Error;
 
 pub type RustDBResult<T> = Result<T, RustDBError>;
 
 #[derive(Error, Debug)]
 pub enum RustDBError {
-    #[error("[BufferPool]: {0}")]
-    BufferPool(String),
+    #[error("[Buffer]: {0}")]
+    Buffer(#[from] buffer::Error),
     #[error("[IO]: {0}")]
     IO(#[from] std::io::Error),
     #[error("[Encode]: {0}")]

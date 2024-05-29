@@ -1,7 +1,6 @@
 use crate::buffer::lru_k_replacer::LruKReplacer;
-use crate::buffer::FrameId;
+use crate::buffer::{Error, FrameId};
 use crate::encoding::{Decoder, Encoder};
-use crate::error::{RustDBError, RustDBResult};
 use crate::storage::disk::disk_manager::DiskManager;
 use crate::storage::page::index::Node;
 use crate::storage::page::table::{Table, TableNode};
@@ -31,7 +30,7 @@ struct Inner {
 }
 
 impl BufferPoolManager {
-    pub async fn new(pool_size: usize, k: usize, disk_manager: DiskManager) -> RustDBResult<Self> {
+    pub async fn new(pool_size: usize, k: usize, disk_manager: DiskManager) -> Result<Self, Error> {
         let replacer = Arc::new(RwLock::new(LruKReplacer::new(pool_size, k)));
         let mut free_list = VecDeque::with_capacity(pool_size);
         for frame_id in 0..pool_size {
@@ -56,7 +55,7 @@ impl BufferPoolManager {
         })
     }
 
-    pub async fn new_page_ref(&self) -> RustDBResult<Option<PageRef>> {
+    pub async fn new_page_ref(&self) -> Result<Option<PageRef>, Error> {
         let mut inner = self.inner.write().await;
         if let Some(frame_id) = self.available_frame(&mut inner).await? {
             let page_id = self.allocate_page();
@@ -76,7 +75,7 @@ impl BufferPoolManager {
         Ok(None)
     }
 
-    pub async fn fetch_page_ref(&self, page_id: PageId) -> RustDBResult<Option<PageRef>> {
+    pub async fn fetch_page_ref(&self, page_id: PageId) -> Result<Option<PageRef>, Error> {
         let mut inner = self.inner.write().await;
         // fetch page from cache
         if let Some(frame_id) = inner.page_table.get(&page_id).cloned() {
@@ -117,7 +116,7 @@ impl BufferPoolManager {
         Ok(None)
     }
 
-    pub async fn flush_page(&self, page_id: PageId) -> RustDBResult<()> {
+    pub async fn flush_page(&self, page_id: PageId) -> Result<(), Error> {
         let inner = self.inner.write().await;
         if let Some(frame_id) = inner.page_table.get(&page_id).cloned() {
             let page = inner.pages[frame_id].clone();
@@ -133,7 +132,7 @@ impl BufferPoolManager {
         Ok(())
     }
 
-    pub async fn flush_page_all(&self) -> RustDBResult<()> {
+    pub async fn flush_page_all(&self) -> Result<(), Error> {
         let inner = self.inner.write().await;
         for page in inner.pages.iter() {
             let page_data = page.data();
@@ -148,7 +147,7 @@ impl BufferPoolManager {
         Ok(())
     }
 
-    pub async fn delete_page(&self, page_id: PageId) -> RustDBResult<Option<PageId>> {
+    pub async fn delete_page(&self, page_id: PageId) -> Result<Option<PageId>, Error> {
         let mut inner = self.inner.write().await;
         if let Some(frame_id) = inner.page_table.get(&page_id).cloned() {
             let page = inner.pages[frame_id].clone();
@@ -175,7 +174,7 @@ impl BufferPoolManager {
     async fn available_frame(
         &self,
         inner: &mut RwLockWriteGuard<'_, Inner>,
-    ) -> RustDBResult<Option<FrameId>> {
+    ) -> Result<Option<FrameId>, Error> {
         if let Some(frame_id) = inner.free_list.pop_front() {
             return Ok(Some(frame_id));
         }
@@ -205,11 +204,11 @@ impl BufferPoolManager {
     pub async fn fetch_page_read_owned(
         &self,
         page_id: PageId,
-    ) -> RustDBResult<OwnedPageDataReadGuard> {
+    ) -> Result<OwnedPageDataReadGuard, Error> {
         let page = self
             .fetch_page_ref(page_id)
             .await?
-            .ok_or(RustDBError::BufferPool("Can't fetch page".into()))?
+            .ok_or(Error::BufferInsufficient)?
             .data_read_owned()
             .await;
         Ok(page)
@@ -218,11 +217,11 @@ impl BufferPoolManager {
     pub async fn fetch_page_write_owned(
         &self,
         page_id: PageId,
-    ) -> RustDBResult<OwnedPageDataWriteGuard> {
+    ) -> Result<OwnedPageDataWriteGuard, Error> {
         let page = self
             .fetch_page_ref(page_id)
             .await?
-            .ok_or(RustDBError::BufferPool("Can't fetch page".into()))?
+            .ok_or(Error::BufferInsufficient)?
             .data_write_owned()
             .await;
         Ok(page)
@@ -231,11 +230,11 @@ impl BufferPoolManager {
     pub async fn try_fetch_page_read_owned(
         &self,
         page_id: PageId,
-    ) -> RustDBResult<OwnedPageDataReadGuard> {
+    ) -> Result<OwnedPageDataReadGuard, Error> {
         let page = self
             .fetch_page_ref(page_id)
             .await?
-            .ok_or(RustDBError::BufferPool("Can't fetch page".into()))?
+            .ok_or(Error::BufferInsufficient)?
             .try_data_read_owned()?;
         Ok(page)
     }
@@ -243,70 +242,70 @@ impl BufferPoolManager {
     pub async fn new_page_write_owned<K>(
         &self,
         node: &mut Node<K>,
-    ) -> RustDBResult<OwnedPageDataWriteGuard>
+    ) -> Result<OwnedPageDataWriteGuard, Error>
     where
         K: Encoder,
     {
         let guard = self
             .new_page_ref()
             .await?
-            .ok_or(RustDBError::BufferPool("Can't new page".into()))?
+            .ok_or(Error::BufferInsufficient)?
             .data_write_owned()
             .await;
         let page_id = guard.page_ref.page_id();
         node.set_page_id(page_id);
         Ok(guard)
     }
-    pub async fn fetch_page_node<K>(&self, page_id: PageId) -> RustDBResult<(PageRef, Node<K>)>
+    pub async fn fetch_page_node<K>(&self, page_id: PageId) -> Result<(PageRef, Node<K>), Error>
     where
         K: Decoder,
     {
         let page = self
             .fetch_page_ref(page_id)
             .await?
-            .ok_or(RustDBError::BufferPool("Can't fetch page".into()))?;
+            .ok_or(Error::BufferInsufficient)?;
         let node = page.page.node().await?;
         Ok((page, node))
     }
 
-    pub async fn new_page_node<K>(&self, node: &mut Node<K>) -> RustDBResult<PageRef>
+    pub async fn new_page_node<K>(&self, node: &mut Node<K>) -> Result<PageRef, Error>
     where
         K: Encoder,
     {
         let page = self
             .new_page_ref()
             .await?
-            .ok_or(RustDBError::BufferPool("Can't new page".into()))?;
+            .ok_or(Error::BufferInsufficient)?;
         let page_id = page.page.page_id();
         node.set_page_id(page_id);
         page.page.write_node_back(node).await?;
         Ok(page)
     }
 
-    pub async fn new_page_table(&self, table: &mut Table) -> RustDBResult<PageRef> {
+    pub async fn new_page_table(&self, table: &mut Table) -> Result<PageRef, Error> {
         let page = self
             .new_page_ref()
             .await?
-            .ok_or(RustDBError::BufferPool("Can't new page".into()))?;
+            .ok_or(Error::BufferInsufficient)?;
         let page_id = page.page.page_id();
         table.set_page_id(page_id);
         page.page.write_table_back(table).await?;
         Ok(page)
     }
-    pub async fn fetch_page_table(&self, page_id: PageId) -> RustDBResult<(PageRef, Table)> {
+    pub async fn fetch_page_table(&self, page_id: PageId) -> Result<(PageRef, Table), Error> {
         let page = self
             .fetch_page_ref(page_id)
             .await?
-            .ok_or(RustDBError::BufferPool("Can't new page".into()))?;
+            .ok_or(Error::BufferInsufficient)?;
         let table = page.page.table().await?;
         Ok((page, table))
     }
 
-    pub async fn new_page_table_node(&self, table_node: &mut TableNode) -> RustDBResult<PageRef> {
+    pub async fn new_page_table_node(&self, table_node: &mut TableNode) -> Result<PageRef, Error> {
         let page = self
             .new_page_ref()
             .await?
-            .ok_or(RustDBError::BufferPool("Can't new page".into()))?;
+            .ok_or(Error::BufferInsufficient)?;
         let page_id = page.page.page_id();
         table_node.set_page_id(page_id);
         page.page.write_table_node_back(table_node).await?;
@@ -315,33 +314,33 @@ impl BufferPoolManager {
     pub async fn fetch_page_table_node(
         &self,
         page_id: PageId,
-    ) -> RustDBResult<(PageRef, TableNode)> {
+    ) -> Result<(PageRef, TableNode), Error> {
         let page = self
             .fetch_page_ref(page_id)
             .await?
-            .ok_or(RustDBError::BufferPool("Can't new page".into()))?;
+            .ok_or(Error::BufferInsufficient)?;
         let table_node = page.page.table_node().await?;
         Ok((page, table_node))
     }
 }
 pub trait NodeTrait {
-    fn node<K>(&self) -> RustDBResult<Node<K>>
+    fn node<K>(&self) -> Result<Node<K>, Error>
     where
         K: Decoder;
-    fn write_back<K>(&mut self, node: &Node<K>) -> RustDBResult<()>
+    fn write_back<K>(&mut self, node: &Node<K>) -> Result<(), Error>
     where
         K: Encoder;
 }
 
 impl NodeTrait for [u8; PAGE_SIZE] {
-    fn node<K>(&self) -> RustDBResult<Node<K>>
+    fn node<K>(&self) -> Result<Node<K>, Error>
     where
         K: Decoder,
     {
         Node::decode(&mut self.as_ref()).map_err(Into::into)
     }
 
-    fn write_back<K>(&mut self, node: &Node<K>) -> RustDBResult<()>
+    fn write_back<K>(&mut self, node: &Node<K>) -> Result<(), Error>
     where
         K: Encoder,
     {
@@ -517,7 +516,7 @@ impl PageRef {
         }
     }
 
-    pub fn try_data_read_owned(self) -> RustDBResult<OwnedPageDataReadGuard> {
+    pub fn try_data_read_owned(self) -> Result<OwnedPageDataReadGuard, Error> {
         let guard = self.page.data().try_read_owned()?;
         Ok(OwnedPageDataReadGuard {
             guard,
@@ -533,7 +532,7 @@ mod tests {
     use std::time::Duration;
 
     #[tokio::test]
-    async fn buffer_pool_manager() -> RustDBResult<()> {
+    async fn buffer_pool_manager() -> Result<(), Error> {
         let random_data = [2u8; PAGE_SIZE];
         let file = tempfile::NamedTempFile::new()?;
         let db_name = file.path();
@@ -603,7 +602,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn simple() -> RustDBResult<()> {
+    async fn simple() -> Result<(), Error> {
         let file = tempfile::NamedTempFile::new()?;
         let db_name = file.path();
         let buffer_pool_size = 10;

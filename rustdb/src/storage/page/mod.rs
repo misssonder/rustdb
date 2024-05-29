@@ -3,8 +3,8 @@ pub mod column;
 pub mod index;
 pub mod table;
 
+use crate::buffer;
 use crate::encoding::{Decoder, Encoder};
-use crate::error::RustDBResult;
 use crate::storage::page::index::Node;
 use crate::storage::page::table::{Table, TableNode};
 use crate::storage::{AtomicPageId, PageId, PAGE_SIZE};
@@ -61,37 +61,37 @@ impl Page {
     pub fn set_dirty(&self, is_dirty: bool) {
         self.is_dirty.store(is_dirty, Ordering::Relaxed);
     }
-    pub async fn node<K>(&self) -> RustDBResult<Node<K>>
+    pub async fn node<K>(&self) -> Result<Node<K>, buffer::Error>
     where
         K: Decoder,
     {
         self.decode().await
     }
 
-    pub async fn write_node_back<K>(&self, node: &Node<K>) -> RustDBResult<()>
+    pub async fn write_node_back<K>(&self, node: &Node<K>) -> Result<(), buffer::Error>
     where
         K: Encoder,
     {
         self.encode(node).await
     }
 
-    pub async fn table(&self) -> RustDBResult<Table> {
+    pub async fn table(&self) -> Result<Table, buffer::Error> {
         self.decode().await
     }
 
-    pub async fn write_table_back(&self, table: &Table) -> RustDBResult<()> {
+    pub async fn write_table_back(&self, table: &Table) -> Result<(), buffer::Error> {
         self.encode(table).await
     }
 
-    pub async fn table_node(&self) -> RustDBResult<TableNode> {
+    pub async fn table_node(&self) -> Result<TableNode, buffer::Error> {
         self.decode().await
     }
 
-    pub async fn write_table_node_back(&self, table_node: &TableNode) -> RustDBResult<()> {
+    pub async fn write_table_node_back(&self, table_node: &TableNode) -> Result<(), buffer::Error> {
         self.encode(table_node).await
     }
 
-    async fn encode<T>(&self, t: &T) -> RustDBResult<()>
+    async fn encode<T>(&self, t: &T) -> Result<(), buffer::Error>
     where
         T: Encoder,
     {
@@ -99,7 +99,7 @@ impl Page {
         t.encode(&mut data.as_mut()).map_err(Into::into)
     }
 
-    async fn decode<T>(&self) -> RustDBResult<T>
+    async fn decode<T>(&self) -> Result<T, buffer::Error>
     where
         T: Decoder,
     {

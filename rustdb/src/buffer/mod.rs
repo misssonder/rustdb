@@ -1,5 +1,7 @@
+use crate::encoding;
 use std::borrow::Borrow;
 use std::hash::{Hash, Hasher};
+use thiserror::Error;
 
 pub mod buffer_poll_manager;
 mod lru_k_replacer;
@@ -57,4 +59,18 @@ where
         let key = unsafe { &*self.k }.borrow();
         KeyWrapper::from_ref(key)
     }
+}
+
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("encoding error {0}")]
+    Encoding(#[from] encoding::error::Error),
+    #[error("buffer insufficient")]
+    BufferInsufficient,
+    #[error("frame_id {0} is not evictable")]
+    UnEvictableFrame(FrameId),
+    #[error("try lock error: {0}")]
+    TryLock(#[from] tokio::sync::TryLockError),
+    #[error("io error: {0}")]
+    IO(#[from] std::io::Error),
 }

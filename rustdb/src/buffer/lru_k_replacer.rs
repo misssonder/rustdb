@@ -1,5 +1,4 @@
-use crate::buffer::{FrameId, KeyRef, KeyWrapper};
-use crate::error::{RustDBError, RustDBResult};
+use crate::buffer::{Error, FrameId, KeyRef, KeyWrapper};
 
 use std::collections::HashMap;
 
@@ -152,15 +151,12 @@ impl LruKReplacer {
         self.current_size.load(Ordering::SeqCst)
     }
 
-    pub fn remove(&mut self, frame_id: FrameId) -> RustDBResult<()> {
+    pub fn remove(&mut self, frame_id: FrameId) -> Result<(), Error> {
         assert!(frame_id.lt(&(self.replacer_size)));
         if let Some(node) = self.node_store.get(KeyWrapper::from_ref(&frame_id)) {
             let node_ptr = node.as_ptr();
             if unsafe { (*node_ptr).is_evictable } {
-                return Err(RustDBError::BufferPool(format!(
-                    "frame_id: {} is not evictable",
-                    frame_id
-                )));
+                return Err(Error::UnEvictableFrame(frame_id));
             }
             Self::detach(node_ptr);
             self.node_store.remove(KeyWrapper::from_ref(&frame_id));
