@@ -1,4 +1,3 @@
-use crate::catalog::TableId;
 use crate::encoding::encoded_size::EncodedSize;
 use crate::encoding::error::Error;
 use crate::encoding::{Decoder, Encoder};
@@ -71,7 +70,6 @@ impl Decoder for Table {
         B: Buf,
     {
         Ok(Self {
-            id: TableId::decode(buf)?,
             name: String::decode(buf)?,
             page_id: PageId::decode(buf)?,
             start: PageId::decode(buf)?,
@@ -86,7 +84,6 @@ impl Encoder for Table {
     where
         B: BufMut,
     {
-        self.id.encode(buf)?;
         self.name.encode(buf)?;
         self.page_id.encode(buf)?;
         self.start.encode(buf)?;
@@ -98,8 +95,7 @@ impl Encoder for Table {
 
 impl EncodedSize for Table {
     fn encoded_size(&self) -> usize {
-        self.id.encoded_size()
-            + self.name.encoded_size()
+        self.name.encoded_size()
             + self.page_id.encoded_size()
             + self.start.encoded_size()
             + self.end.encoded_size()
@@ -118,7 +114,6 @@ mod tests {
     fn encode_decode_table() {
         let mut buffer = [0; PAGE_SIZE];
         let table = Table::new(
-            0,
             "table_1",
             1,
             1,

@@ -1,4 +1,4 @@
-use crate::catalog::{ColumnId, TableId};
+use crate::catalog::{ColumnId};
 use crate::sql::types::Value;
 use crate::storage::page::column::Column;
 use crate::storage::PageId;
@@ -7,8 +7,6 @@ use std::collections::BTreeMap;
 /// Table is List, it contains a bunch of pages which can be decoded into TableNode
 #[derive(Debug, PartialEq)]
 pub struct Table {
-    /// Table Id
-    pub(crate) id: TableId,
     /// Table name
     pub(crate) name: String,
     /// This Table's page_id
@@ -23,14 +21,12 @@ pub struct Table {
 
 impl Table {
     pub fn new(
-        id: TableId,
         name: impl Into<String>,
         page_id: PageId,
         node_page_id: PageId,
         columns: Vec<Column>,
     ) -> Self {
         Self {
-            id,
             name: name.into(),
             page_id,
             start: node_page_id,

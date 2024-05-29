@@ -26,7 +26,7 @@ impl Table {
         buffer_pool: Arc<BufferPoolManager>,
     ) -> RustDBResult<Self> {
         let mut table_node = TableNode::new(0, vec![]);
-        let mut table_heap = page::table::Table::new(id, name.clone(), 0, 0, columns.clone());
+        let mut table_heap = page::table::Table::new(name.clone(), 0, 0, columns.clone());
 
         buffer_pool.new_page_table_node(&mut table_node).await?;
         table_heap.set_start(table_node.page_id());
