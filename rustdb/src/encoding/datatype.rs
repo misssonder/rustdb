@@ -1,6 +1,6 @@
 use crate::encoding::encoded_size::EncodedSize;
+use crate::encoding::error::Error;
 use crate::encoding::{Decoder, Encoder};
-use crate::error::{RustDBError, RustDBResult};
 use crate::sql::types::{DataType, Value};
 use bytes::{Buf, BufMut};
 
@@ -51,7 +51,7 @@ impl DataType {
         }
     }
 
-    pub fn from_byte(byte: u8) -> RustDBResult<Self> {
+    pub fn from_byte(byte: u8) -> Result<Self, Error> {
         Ok(match byte {
             basetype::BOOLEAN => DataType::Boolean,
             basetype::TINYINT => DataType::Tinyint,
@@ -61,20 +61,13 @@ impl DataType {
             basetype::FLOAT => DataType::Float,
             basetype::DOUBLE => DataType::Double,
             basetype::STRING => DataType::String,
-            other => {
-                return Err(RustDBError::Decode(format!(
-                    "Can't decode {} as datatype",
-                    other
-                )))
-            }
+            other => return Err(Error::Decode(format!("Can't decode {} as datatype", other))),
         })
     }
 }
 
 impl Decoder for DataType {
-    type Error = RustDBError;
-
-    fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
+    fn decode<B>(buf: &mut B) -> Result<Self, Error>
     where
         B: Buf,
     {
@@ -83,9 +76,7 @@ impl Decoder for DataType {
 }
 
 impl Encoder for DataType {
-    type Error = RustDBError;
-
-    fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
+    fn encode<B>(&self, buf: &mut B) -> Result<(), Error>
     where
         B: BufMut,
     {
@@ -100,9 +91,7 @@ impl EncodedSize for DataType {
 }
 
 impl Decoder for Value {
-    type Error = RustDBError;
-
-    fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
+    fn decode<B>(buf: &mut B) -> Result<Self, Error>
     where
         B: Buf,
     {
@@ -117,20 +106,13 @@ impl Decoder for Value {
             basevalue::FLOAT => Value::Float(f32::decode(buf)?),
             basevalue::DOUBLE => Value::Double(f64::decode(buf)?),
             basevalue::STRING => Value::String(String::decode(buf)?),
-            other => {
-                return Err(RustDBError::Decode(format!(
-                    "Can't decode {} as value",
-                    other
-                )))
-            }
+            other => return Err(Error::Decode(format!("Can't decode {} as value", other))),
         })
     }
 }
 
 impl Encoder for Value {
-    type Error = RustDBError;
-
-    fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
+    fn encode<B>(&self, buf: &mut B) -> Result<(), Error>
     where
         B: BufMut,
     {
@@ -190,9 +172,7 @@ impl EncodedSize for Value {
 }
 
 impl Encoder for Option<Value> {
-    type Error = RustDBError;
-
-    fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
+    fn encode<B>(&self, buf: &mut B) -> Result<(), Error>
     where
         B: BufMut,
     {
@@ -207,9 +187,7 @@ impl Encoder for Option<Value> {
 }
 
 impl Decoder for Option<Value> {
-    type Error = RustDBError;
-
-    fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
+    fn decode<B>(buf: &mut B) -> Result<Self, Error>
     where
         B: Buf,
     {

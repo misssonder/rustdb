@@ -1,5 +1,5 @@
+use crate::encoding::error::Error;
 use crate::encoding::{Decoder, Encoder};
-use crate::error::RustDBError;
 use crate::storage::page::index::{Header, Internal, Leaf, Node};
 use crate::storage::{PageId, RecordId};
 use bytes::{Buf, BufMut};
@@ -8,29 +8,25 @@ const INTERNAL_TYPE: u8 = 1;
 const LEAF_TYPE: u8 = 2;
 impl<K> Decoder for Node<K>
 where
-    K: Decoder<Error = RustDBError>,
+    K: Decoder,
 {
-    type Error = RustDBError;
-
-    fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
+    fn decode<B>(buf: &mut B) -> Result<Self, Error>
     where
         B: Buf,
     {
         match u8::decode(buf)? {
             INTERNAL_TYPE => Ok(Node::Internal(Internal::decode(buf)?)),
             LEAF_TYPE => Ok(Node::Leaf(Leaf::decode(buf)?)),
-            other => Err(RustDBError::Decode(format!("Page type {} invalid", other))),
+            other => Err(Error::Decode(format!("Page type {} invalid", other))),
         }
     }
 }
 
 impl<K> Encoder for Node<K>
 where
-    K: Encoder<Error = RustDBError>,
+    K: Encoder,
 {
-    type Error = RustDBError;
-
-    fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
+    fn encode<B>(&self, buf: &mut B) -> Result<(), Error>
     where
         B: BufMut,
     {
@@ -48,9 +44,7 @@ where
 }
 
 impl Encoder for Header {
-    type Error = RustDBError;
-
-    fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
+    fn encode<B>(&self, buf: &mut B) -> Result<(), Error>
     where
         B: BufMut,
     {
@@ -65,9 +59,7 @@ impl Encoder for Header {
 }
 
 impl Decoder for Header {
-    type Error = RustDBError;
-
-    fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
+    fn decode<B>(buf: &mut B) -> Result<Self, Error>
     where
         B: Buf,
     {
@@ -84,11 +76,9 @@ impl Decoder for Header {
 
 impl<K> Decoder for Internal<K>
 where
-    K: Decoder<Error = RustDBError>,
+    K: Decoder,
 {
-    type Error = RustDBError;
-
-    fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
+    fn decode<B>(buf: &mut B) -> Result<Self, Error>
     where
         B: Buf,
     {
@@ -105,11 +95,9 @@ where
 
 impl<K> Encoder for Internal<K>
 where
-    K: Encoder<Error = RustDBError>,
+    K: Encoder,
 {
-    type Error = RustDBError;
-
-    fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
+    fn encode<B>(&self, buf: &mut B) -> Result<(), Error>
     where
         B: BufMut,
     {
@@ -124,11 +112,9 @@ where
 
 impl<K> Decoder for Leaf<K>
 where
-    K: Decoder<Error = RustDBError>,
+    K: Decoder,
 {
-    type Error = RustDBError;
-
-    fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
+    fn decode<B>(buf: &mut B) -> Result<Self, Error>
     where
         B: Buf,
     {
@@ -145,11 +131,9 @@ where
 
 impl<K> Encoder for Leaf<K>
 where
-    K: Encoder<Error = RustDBError>,
+    K: Encoder,
 {
-    type Error = RustDBError;
-
-    fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
+    fn encode<B>(&self, buf: &mut B) -> Result<(), Error>
     where
         B: BufMut,
     {

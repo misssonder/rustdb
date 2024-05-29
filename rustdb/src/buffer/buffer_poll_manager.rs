@@ -245,7 +245,7 @@ impl BufferPoolManager {
         node: &mut Node<K>,
     ) -> RustDBResult<OwnedPageDataWriteGuard>
     where
-        K: Encoder<Error = RustDBError>,
+        K: Encoder,
     {
         let guard = self
             .new_page_ref()
@@ -259,7 +259,7 @@ impl BufferPoolManager {
     }
     pub async fn fetch_page_node<K>(&self, page_id: PageId) -> RustDBResult<(PageRef, Node<K>)>
     where
-        K: Decoder<Error = RustDBError>,
+        K: Decoder,
     {
         let page = self
             .fetch_page_ref(page_id)
@@ -271,7 +271,7 @@ impl BufferPoolManager {
 
     pub async fn new_page_node<K>(&self, node: &mut Node<K>) -> RustDBResult<PageRef>
     where
-        K: Encoder<Error = RustDBError>,
+        K: Encoder,
     {
         let page = self
             .new_page_ref()
@@ -327,25 +327,25 @@ impl BufferPoolManager {
 pub trait NodeTrait {
     fn node<K>(&self) -> RustDBResult<Node<K>>
     where
-        K: Decoder<Error = RustDBError>;
+        K: Decoder;
     fn write_back<K>(&mut self, node: &Node<K>) -> RustDBResult<()>
     where
-        K: Encoder<Error = RustDBError>;
+        K: Encoder;
 }
 
 impl NodeTrait for [u8; PAGE_SIZE] {
     fn node<K>(&self) -> RustDBResult<Node<K>>
     where
-        K: Decoder<Error = RustDBError>,
+        K: Decoder,
     {
-        Node::decode(&mut self.as_ref())
+        Node::decode(&mut self.as_ref()).map_err(Into::into)
     }
 
     fn write_back<K>(&mut self, node: &Node<K>) -> RustDBResult<()>
     where
-        K: Encoder<Error = RustDBError>,
+        K: Encoder,
     {
-        node.encode(&mut self.as_mut())
+        node.encode(&mut self.as_mut()).map_err(Into::into)
     }
 }
 pub struct PageRef {

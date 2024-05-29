@@ -1,5 +1,4 @@
-use crate::error::RustDBError;
-
+use crate::encoding::error::Error;
 use bytes::{Buf, BufMut};
 
 pub mod index;
@@ -7,22 +6,20 @@ pub mod index;
 mod column;
 mod datatype;
 pub mod encoded_size;
+pub mod error;
 mod record_id;
 mod table;
 
 pub type EncoderVecLen = u32;
 
 pub trait Encoder: Sized {
-    type Error;
-    fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
+    fn encode<B>(&self, buf: &mut B) -> Result<(), Error>
     where
         B: BufMut;
 }
 
 pub trait Decoder: Sized {
-    type Error;
-
-    fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
+    fn decode<B>(buf: &mut B) -> Result<Self, Error>
     where
         B: Buf;
 }
@@ -33,9 +30,8 @@ pub trait Nullable: Sized {
 macro_rules! impl_decoder {
     ($($ty:ty,$fn:ident);+$(;)?) => {
         $(impl Decoder for $ty {
-            type Error = RustDBError;
 
-            fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
+            fn decode<B>(buf: &mut B) -> Result<Self, Error>
             where
                 B: Buf,
             {
@@ -48,9 +44,8 @@ macro_rules! impl_decoder {
 macro_rules! impl_encoder {
     ($($ty:ty,$fn:ident);+$(;)?) => {
         $(impl Encoder for $ty{
-            type Error = RustDBError;
 
-            fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
+            fn encode<B>(&self, buf: &mut B) -> Result<(), Error>
             where
                 B: BufMut,
             {
@@ -119,9 +114,7 @@ impl_nullable_as_max! {
 }
 
 impl Decoder for bool {
-    type Error = RustDBError;
-
-    fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
+    fn decode<B>(buf: &mut B) -> Result<Self, Error>
     where
         B: Buf,
     {
@@ -129,15 +122,13 @@ impl Decoder for bool {
         Ok(match val {
             0 => false,
             1 => true,
-            other => return Err(RustDBError::Decode(format!("Can't decode {other} as bool"))),
+            other => return Err(Error::Decode(format!("Can't decode {other} as bool"))),
         })
     }
 }
 
 impl Encoder for bool {
-    type Error = RustDBError;
-
-    fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
+    fn encode<B>(&self, buf: &mut B) -> Result<(), Error>
     where
         B: BufMut,
     {
@@ -150,9 +141,7 @@ impl Encoder for bool {
 }
 
 impl Decoder for usize {
-    type Error = RustDBError;
-
-    fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
+    fn decode<B>(buf: &mut B) -> Result<Self, Error>
     where
         B: Buf,
     {
@@ -160,9 +149,7 @@ impl Decoder for usize {
     }
 }
 impl Encoder for usize {
-    type Error = RustDBError;
-
-    fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
+    fn encode<B>(&self, buf: &mut B) -> Result<(), Error>
     where
         B: BufMut,
     {
@@ -171,9 +158,7 @@ impl Encoder for usize {
 }
 
 impl Decoder for isize {
-    type Error = RustDBError;
-
-    fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
+    fn decode<B>(buf: &mut B) -> Result<Self, Error>
     where
         B: Buf,
     {
@@ -182,9 +167,7 @@ impl Decoder for isize {
 }
 
 impl Encoder for isize {
-    type Error = RustDBError;
-
-    fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
+    fn encode<B>(&self, buf: &mut B) -> Result<(), Error>
     where
         B: BufMut,
     {
@@ -193,9 +176,7 @@ impl Encoder for isize {
 }
 
 impl Encoder for String {
-    type Error = RustDBError;
-
-    fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
+    fn encode<B>(&self, buf: &mut B) -> Result<(), Error>
     where
         B: BufMut,
     {
@@ -206,9 +187,7 @@ impl Encoder for String {
 }
 
 impl Decoder for String {
-    type Error = RustDBError;
-
-    fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
+    fn decode<B>(buf: &mut B) -> Result<Self, Error>
     where
         B: Buf,
     {
@@ -217,15 +196,12 @@ impl Decoder for String {
         for _ in 0..len {
             bytes.push(u8::decode(buf)?)
         }
-        String::from_utf8(bytes)
-            .map_err(|err| RustDBError::Decode("Can't read bytes in utf-8".into()))
+        String::from_utf8(bytes).map_err(|err| Error::Decode("Can't read bytes in utf-8".into()))
     }
 }
 
 impl Decoder for Option<bool> {
-    type Error = RustDBError;
-
-    fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
+    fn decode<B>(buf: &mut B) -> Result<Self, Error>
     where
         B: Buf,
     {
@@ -234,15 +210,13 @@ impl Decoder for Option<bool> {
             0 => Some(false),
             1 => Some(true),
             u8::MAX => None,
-            other => return Err(RustDBError::Decode(format!("Can't decode {other} as bool"))),
+            other => return Err(Error::Decode(format!("Can't decode {other} as bool"))),
         })
     }
 }
 
 impl Encoder for Option<bool> {
-    type Error = RustDBError;
-
-    fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
+    fn encode<B>(&self, buf: &mut B) -> Result<(), Error>
     where
         B: BufMut,
     {
@@ -256,9 +230,7 @@ impl Encoder for Option<bool> {
 }
 
 impl Decoder for Option<String> {
-    type Error = RustDBError;
-
-    fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
+    fn decode<B>(buf: &mut B) -> Result<Self, Error>
     where
         B: Buf,
     {
@@ -273,14 +245,12 @@ impl Decoder for Option<String> {
         }
         String::from_utf8(bytes)
             .map(Some)
-            .map_err(|err| RustDBError::Decode("Can't read bytes in utf-8".into()))
+            .map_err(|err| Error::Decode("Can't read bytes in utf-8".into()))
     }
 }
 
 impl Encoder for Option<String> {
-    type Error = RustDBError;
-
-    fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
+    fn encode<B>(&self, buf: &mut B) -> Result<(), Error>
     where
         B: BufMut,
     {
@@ -293,11 +263,9 @@ impl Encoder for Option<String> {
 
 impl<T> Decoder for Option<T>
 where
-    T: Decoder<Error = RustDBError> + Nullable + PartialEq,
+    T: Decoder + Nullable + PartialEq,
 {
-    type Error = RustDBError;
-
-    fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
+    fn decode<B>(buf: &mut B) -> Result<Self, Error>
     where
         B: Buf,
     {
@@ -313,11 +281,9 @@ where
 
 impl<T> Encoder for Option<T>
 where
-    T: Encoder<Error = RustDBError> + Nullable,
+    T: Encoder + Nullable,
 {
-    type Error = RustDBError;
-
-    fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
+    fn encode<B>(&self, buf: &mut B) -> Result<(), Error>
     where
         B: BufMut,
     {
@@ -331,11 +297,9 @@ where
 
 impl<T> Decoder for Vec<T>
 where
-    T: Decoder<Error = RustDBError>,
+    T: Decoder,
 {
-    type Error = RustDBError;
-
-    fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
+    fn decode<B>(buf: &mut B) -> Result<Self, Error>
     where
         B: Buf,
     {
@@ -350,11 +314,9 @@ where
 
 impl<T> Encoder for Vec<T>
 where
-    T: Encoder<Error = RustDBError>,
+    T: Encoder,
 {
-    type Error = RustDBError;
-
-    fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
+    fn encode<B>(&self, buf: &mut B) -> Result<(), Error>
     where
         B: BufMut,
     {

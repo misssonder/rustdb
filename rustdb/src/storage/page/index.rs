@@ -482,8 +482,9 @@ impl<K> Leaf<K> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::encoding;
     use crate::encoding::{Decoder, Encoder};
-    use crate::error::{RustDBError, RustDBResult};
+    use crate::error::RustDBResult;
     use crate::storage::PAGE_SIZE;
     use bytes::{Buf, BufMut};
 
@@ -493,9 +494,7 @@ mod tests {
     }
 
     impl Encoder for Key {
-        type Error = RustDBError;
-
-        fn encode<B>(&self, buf: &mut B) -> Result<(), Self::Error>
+        fn encode<B>(&self, buf: &mut B) -> Result<(), encoding::error::Error>
         where
             B: BufMut,
         {
@@ -505,9 +504,7 @@ mod tests {
     }
 
     impl Decoder for Key {
-        type Error = RustDBError;
-
-        fn decode<B>(buf: &mut B) -> Result<Self, Self::Error>
+        fn decode<B>(buf: &mut B) -> Result<Self, encoding::error::Error>
         where
             B: Buf,
         {

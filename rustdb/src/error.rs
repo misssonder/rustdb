@@ -1,4 +1,4 @@
-use crate::sql;
+use crate::{encoding, sql};
 use thiserror::Error;
 
 pub type RustDBResult<T> = Result<T, RustDBError>;
@@ -10,9 +10,7 @@ pub enum RustDBError {
     #[error("[IO]: {0}")]
     IO(#[from] std::io::Error),
     #[error("[Encode]: {0}")]
-    Encode(String),
-    #[error("[Decode]: {0}")]
-    Decode(String),
+    Encoding(#[from] encoding::error::Error),
     #[error("[TryLock]: {0}")]
     TryLock(#[from] tokio::sync::TryLockError),
     #[error("[Value]: {0}")]
