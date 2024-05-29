@@ -84,12 +84,12 @@ impl TableNode {
         }
     }
 
-    pub fn set_page_id(&mut self, page_id: PageId) {
-        self.page_id = page_id
-    }
-
     pub fn page_id(&self) -> PageId {
         self.page_id
+    }
+
+    pub fn set_page_id(&mut self, page_id: PageId) {
+        self.page_id = page_id
     }
     pub fn set_next(&mut self, page_id: PageId) {
         self.next = Some(page_id)

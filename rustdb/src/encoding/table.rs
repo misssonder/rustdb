@@ -142,9 +142,13 @@ mod tests {
             next: None,
             tuples: vec![Tuple::new(vec![
                 Value::Null,
+                Value::Tinyint(2),
+                Value::Smallint(4),
+                Value::Integer(6),
                 Value::Bigint(1024),
+                Value::Float(1.0),
+                Value::Double(1.0),
                 Value::String("Hello world".into()),
-                Value::Double(0.5),
             ])],
         };
         table_node.encode(&mut buffer.as_mut()).unwrap();

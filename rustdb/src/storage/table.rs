@@ -21,6 +21,7 @@ impl Table {
         let mut table_heap = page::table::Table::new(name.clone(), 0, 0, columns.clone());
 
         buffer_pool.new_page_table_node(&mut table_node).await?;
+
         table_heap.set_start(table_node.page_id());
         table_heap.set_end(table_node.page_id());
         buffer_pool.new_page_table(&mut table_heap).await?;
@@ -40,14 +41,14 @@ impl Table {
         Ok(self.table().await?.1.columns)
     }
 
-    pub async fn push_column(&mut self, column: Column) -> StorageResult<()> {
+    pub async fn push_column(&self, column: Column) -> StorageResult<()> {
         let (page, mut table) = self.table().await?;
         table.push_column(column);
         page.page().write_table_back(&table).await?;
         Ok(())
     }
 
-    pub async fn insert_column(&mut self, index: usize, column: Column) -> StorageResult<()> {
+    pub async fn insert_column(&self, index: usize, column: Column) -> StorageResult<()> {
         let (page, mut table) = self.table().await?;
         table.insert_column(index, column);
         page.page().write_table_back(&table).await?;
@@ -72,6 +73,21 @@ impl Table {
             .write_table_node_back(&node)
             .await
             .map_err(Into::into)
+    }
+
+    pub async fn tuples(&self) -> StorageResult<Vec<Tuple>> {
+        let mut page_id = self.table().await?.1.start;
+        let mut output = Vec::new();
+        loop {
+            let node = self.buffer_pool.fetch_page_table_node(page_id).await?.1;
+            let next = node.next();
+            output.extend(node.tuples);
+            match next {
+                None => break,
+                Some(next) => page_id = next,
+            }
+        }
+        Ok(output)
     }
 
     async fn add_node(&self) -> StorageResult<(PageRef, TableNode)> {
@@ -106,14 +122,9 @@ impl Table {
             .map_err(Into::into)
     }
 
-    async fn remaining_size(&self) -> StorageResult<Option<usize>> {
-        let (_, node) = self.last_node().await?;
-        Ok(node.total_size().checked_sub(node.encoded_size()))
-    }
-
     async fn has_remaining(&self, tuple: &Tuple) -> StorageResult<bool> {
         let (_, node) = self.last_node().await?;
-        Ok(node.encoded_size() + tuple.encoded_size() > node.total_size())
+        Ok(node.total_size() > node.encoded_size() + tuple.encoded_size())
     }
 }
 
@@ -123,17 +134,21 @@ mod tests {
     use crate::sql::types::{DataType, Value};
     use crate::storage::disk::disk_manager::DiskManager;
 
-    #[tokio::test]
-    async fn table() -> StorageResult<()> {
+    async fn new_buffer_pool() -> StorageResult<BufferPoolManager> {
         let f = tempfile::NamedTempFile::new()?;
         let disk_manager = DiskManager::new(f.path()).await?;
-        let buffer_manager = BufferPoolManager::new(100, 2, disk_manager).await?;
+        Ok(BufferPoolManager::new(100, 2, disk_manager).await?)
+    }
+
+    #[tokio::test]
+    async fn table() -> StorageResult<()> {
+        let buffer_manager = new_buffer_pool().await?;
 
         let column_id = Column::new("id", DataType::Bigint).with_primary(true);
         let column_name =
             Column::new("name", DataType::String).with_default(Value::String("hello".to_string()));
         let column_gender = Column::new("gender", DataType::Boolean).with_primary(true);
-        let mut table = Table::new(
+        let table = Table::new(
             "user",
             vec![column_id.clone(), column_name.clone()],
             Arc::new(buffer_manager),
@@ -149,6 +164,31 @@ mod tests {
             table.push_column(column_gender.clone()).await?;
         }
         assert_eq!(table.columns().await?.len(), 12);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn insert_tuple() -> StorageResult<()> {
+        let buffer_manager = new_buffer_pool().await?;
+        let column_id = Column::new("id", DataType::Bigint).with_primary(true);
+        let column_name =
+            Column::new("name", DataType::String).with_default(Value::String("hello".to_string()));
+        let table = Table::new(
+            "user",
+            vec![column_id.clone(), column_name.clone()],
+            Arc::new(buffer_manager),
+        )
+        .await?;
+        for id in 0..1024 {
+            table
+                .insert(Tuple::new(vec![
+                    Value::Bigint(id),
+                    Value::String("world".to_string()),
+                ]))
+                .await?;
+        }
+        println!("{}", table.table().await?.1.end);
+        assert_eq!(table.tuples().await?.len(), 1024);
         Ok(())
     }
 }
