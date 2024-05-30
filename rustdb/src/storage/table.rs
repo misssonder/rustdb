@@ -179,7 +179,7 @@ mod tests {
             Arc::new(buffer_manager),
         )
         .await?;
-        for id in 0..1024 {
+        for id in 0..4096 {
             table
                 .insert(Tuple::new(vec![
                     Value::Bigint(id),
@@ -187,8 +187,7 @@ mod tests {
                 ]))
                 .await?;
         }
-        println!("{}", table.table().await?.1.end);
-        assert_eq!(table.tuples().await?.len(), 1024);
+        assert_eq!(table.tuples().await?.len(), 4096);
         Ok(())
     }
 }
