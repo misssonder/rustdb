@@ -3,6 +3,7 @@ use crate::catalog::error::Error;
 use crate::catalog::{ColumnId, TableId};
 use std::collections::{BTreeMap, HashMap};
 
+#[derive(Debug, Clone, PartialEq)]
 pub struct TableCatalog {
     id: TableId,
     name: String,
@@ -50,6 +51,10 @@ impl TableCatalog {
 
     pub fn read_id_by_name(&self, name: &str) -> Option<ColumnId> {
         self.column_idxs.get(name).copied()
+    }
+
+    pub fn set_id(&mut self, id: TableId) {
+        self.id = id
     }
 
     fn add_column(&mut self, mut column: ColumnCatalog) -> Result<(), Error> {
