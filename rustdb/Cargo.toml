@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 bytes.workspace = true
 indexmap.workspace = true
+ordered-float = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["full"] }

@@ -1,8 +1,7 @@
 use crate::sql::types::{DataType, Value};
-use serde::{Deserialize, Serialize};
-use std::fmt::Write;
+use crate::storage::{Error, StorageResult};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Column {
     pub name: String,
     pub datatype: DataType,
@@ -69,5 +68,46 @@ impl Column {
 
     pub fn primary(&self) -> bool {
         self.primary_key
+    }
+
+    pub fn validate(&self) -> StorageResult<()> {
+        // Validate primary key
+        if self.primary_key && self.nullable.unwrap_or_default() {
+            return Err(Error::Value(format!(
+                "Primary key {} cannot be nullable",
+                self.name
+            )));
+        }
+        if self.primary_key && !self.unique {
+            return Err(Error::Value(format!(
+                "Primary key {} must be unique",
+                self.name
+            )));
+        }
+
+        // Validate default value
+        if let Some(default) = &self.default {
+            if let Some(datatype) = default.datatype() {
+                if datatype != self.datatype {
+                    return Err(Error::Value(format!(
+                        "Default value for column {} has datatype {}, must be {}",
+                        self.name, datatype, self.datatype
+                    )));
+                }
+            } else if !self.nullable.unwrap_or_default() {
+                return Err(Error::Value(format!(
+                    "Can't use NULL as default value for non-nullable column {}",
+                    self.name
+                )));
+            }
+        } else if self.nullable.unwrap_or_default() {
+            return Err(Error::Value(format!(
+                "Nullable column {} must have a default value",
+                self.name
+            )));
+        }
+        // todo validate reference
+
+        Ok(())
     }
 }
