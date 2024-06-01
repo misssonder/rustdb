@@ -1,5 +1,6 @@
 use crate::error::{RustDBError, RustDBResult};
 use crate::sql::types::Value;
+use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -58,12 +59,18 @@ impl Expression {
                     lhs.checked_add(rhs)
                         .ok_or(RustDBError::Value("Bigint overflow".into()))?,
                 ),
-                (Value::Float(lhs), Value::Float(rhs)) => Value::Float(lhs + rhs),
-                (Value::Double(lhs), Value::Double(rhs)) => Value::Double(lhs + rhs),
+                (Value::Float(lhs), Value::Float(rhs)) => Value::Float(OrderedFloat(lhs.0 + rhs.0)),
+                (Value::Double(lhs), Value::Double(rhs)) => {
+                    Value::Double(OrderedFloat(lhs.0 + rhs.0))
+                }
                 (Value::Null, Value::Null) => Value::Null,
                 /// cast float
-                (Value::Float(lhs), Value::Double(rhs)) => Value::Double(lhs as f64 + rhs),
-                (Value::Double(lhs), Value::Float(rhs)) => Value::Double(lhs + rhs as f64),
+                (Value::Float(lhs), Value::Double(rhs)) => {
+                    Value::Double(OrderedFloat(lhs.0 as f64 + rhs.0))
+                }
+                (Value::Double(lhs), Value::Float(rhs)) => {
+                    Value::Double(OrderedFloat(lhs.0 + rhs.0 as f64))
+                }
                 (lhs, rhs) => {
                     return Err(RustDBError::Value(format!("Can't add {} and {}", lhs, rhs)))
                 }
@@ -85,12 +92,18 @@ impl Expression {
                     lhs.checked_sub(rhs)
                         .ok_or(RustDBError::Value("Bigint underflow".into()))?,
                 ),
-                (Value::Float(lhs), Value::Float(rhs)) => Value::Float(lhs - rhs),
-                (Value::Double(lhs), Value::Double(rhs)) => Value::Double(lhs - rhs),
+                (Value::Float(lhs), Value::Float(rhs)) => Value::Float(OrderedFloat(lhs.0 - rhs.0)),
+                (Value::Double(lhs), Value::Double(rhs)) => {
+                    Value::Double(OrderedFloat(lhs.0 - rhs.0))
+                }
                 (Value::Null, Value::Null) => Value::Null,
                 /// cast float
-                (Value::Float(lhs), Value::Double(rhs)) => Value::Double(lhs as f64 - rhs),
-                (Value::Double(lhs), Value::Float(rhs)) => Value::Double(lhs - rhs as f64),
+                (Value::Float(lhs), Value::Double(rhs)) => {
+                    Value::Double(OrderedFloat(lhs.0 as f64 - rhs.0))
+                }
+                (Value::Double(lhs), Value::Float(rhs)) => {
+                    Value::Double(OrderedFloat(lhs.0 - rhs.0 as f64))
+                }
                 (lhs, rhs) => {
                     return Err(RustDBError::Value(format!(
                         "Can't subtract {} and {}",
@@ -115,12 +128,18 @@ impl Expression {
                     lhs.checked_sub(rhs)
                         .ok_or(RustDBError::Value("Bigint overflow".into()))?,
                 ),
-                (Value::Float(lhs), Value::Float(rhs)) => Value::Float(lhs * rhs),
-                (Value::Double(lhs), Value::Double(rhs)) => Value::Double(lhs * rhs),
+                (Value::Float(lhs), Value::Float(rhs)) => Value::Float(OrderedFloat(lhs.0 * rhs.0)),
+                (Value::Double(lhs), Value::Double(rhs)) => {
+                    Value::Double(OrderedFloat(lhs.0 * rhs.0))
+                }
                 (Value::Null, Value::Null) => Value::Null,
                 /// cast float
-                (Value::Float(lhs), Value::Double(rhs)) => Value::Double(lhs as f64 * rhs),
-                (Value::Double(lhs), Value::Float(rhs)) => Value::Double(lhs * rhs as f64),
+                (Value::Float(lhs), Value::Double(rhs)) => {
+                    Value::Double(OrderedFloat(lhs.0 as f64 * rhs.0))
+                }
+                (Value::Double(lhs), Value::Float(rhs)) => {
+                    Value::Double(OrderedFloat(lhs.0 * rhs.0 as f64))
+                }
                 (lhs, rhs) => {
                     return Err(RustDBError::Value(format!(
                         "Can't multiply {} and {}",
@@ -152,12 +171,18 @@ impl Expression {
                     lhs.checked_div(rhs)
                         .ok_or(RustDBError::Value("Bigint underflow".into()))?,
                 ),
-                (Value::Float(lhs), Value::Float(rhs)) => Value::Float(lhs / rhs),
-                (Value::Double(lhs), Value::Double(rhs)) => Value::Double(lhs / rhs),
+                (Value::Float(lhs), Value::Float(rhs)) => Value::Float(OrderedFloat(lhs.0 / rhs.0)),
+                (Value::Double(lhs), Value::Double(rhs)) => {
+                    Value::Double(OrderedFloat(lhs.0 / rhs.0))
+                }
                 (Value::Null, Value::Null) => Value::Null,
                 /// cast float
-                (Value::Float(lhs), Value::Double(rhs)) => Value::Double(lhs as f64 / rhs),
-                (Value::Double(lhs), Value::Float(rhs)) => Value::Double(lhs / rhs as f64),
+                (Value::Float(lhs), Value::Double(rhs)) => {
+                    Value::Double(OrderedFloat(lhs.0 as f64 / rhs.0))
+                }
+                (Value::Double(lhs), Value::Float(rhs)) => {
+                    Value::Double(OrderedFloat(lhs.0 / rhs.0 as f64))
+                }
                 (lhs, rhs) => {
                     return Err(RustDBError::Value(format!(
                         "Can't divide {} and {}",
@@ -167,22 +192,28 @@ impl Expression {
             }),
             Expression::Exponentiate(lhs, rhs) => Ok(match (lhs.evaluate()?, rhs.evaluate()?) {
                 (Value::Tinyint(lhs), Value::Tinyint(rhs)) => {
-                    Value::Double((lhs as f64).powf(rhs as f64))
+                    Value::Double(OrderedFloat((lhs as f64).powf(rhs as f64)))
                 }
                 (Value::Smallint(lhs), Value::Smallint(rhs)) => {
-                    Value::Double((lhs as f64).powf(rhs as f64))
+                    Value::Double(OrderedFloat((lhs as f64).powf(rhs as f64)))
                 }
                 (Value::Integer(lhs), Value::Integer(rhs)) => {
-                    Value::Double((lhs as f64).powf(rhs as f64))
+                    Value::Double(OrderedFloat((lhs as f64).powf(rhs as f64)))
                 }
                 (Value::Bigint(lhs), Value::Bigint(rhs)) => {
-                    Value::Double((lhs as f64).powf(rhs as f64))
+                    Value::Double(OrderedFloat((lhs as f64).powf(rhs as f64)))
                 }
-                (Value::Float(lhs), Value::Float(rhs)) => Value::Float(lhs.powf(rhs)),
-                (Value::Double(lhs), Value::Double(rhs)) => Value::Double(lhs.powf(rhs)),
+                (Value::Float(lhs), Value::Float(rhs)) => {
+                    Value::Float(OrderedFloat(lhs.0.powf(rhs.0)))
+                }
+                (Value::Double(lhs), Value::Double(rhs)) => {
+                    Value::Double(OrderedFloat(lhs.powf(rhs.0)))
+                }
                 (Value::Null, Value::Null) => Value::Null,
                 /// cast float
-                (Value::Double(lhs), Value::Float(rhs)) => Value::Double(lhs.powf(rhs as f64)),
+                (Value::Double(lhs), Value::Float(rhs)) => {
+                    Value::Double(OrderedFloat(lhs.0.powf(rhs.0 as f64)))
+                }
                 (lhs, rhs) => {
                     return Err(RustDBError::Value(format!(
                         "Can't exponentiate {} and {}",

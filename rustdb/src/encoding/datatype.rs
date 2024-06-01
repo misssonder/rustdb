@@ -3,6 +3,7 @@ use crate::encoding::error::Error;
 use crate::encoding::{Decoder, Encoder};
 use crate::sql::types::{DataType, Value};
 use bytes::{Buf, BufMut};
+use ordered_float::OrderedFloat;
 
 mod basetype {
     use std::mem;
@@ -103,8 +104,8 @@ impl Decoder for Value {
             basevalue::SMALLINT => Value::Smallint(i32::decode(buf)?),
             basevalue::INTEGER => Value::Integer(i64::decode(buf)?),
             basevalue::BIGINT => Value::Bigint(i128::decode(buf)?),
-            basevalue::FLOAT => Value::Float(f32::decode(buf)?),
-            basevalue::DOUBLE => Value::Double(f64::decode(buf)?),
+            basevalue::FLOAT => Value::Float(OrderedFloat::<f32>::decode(buf)?),
+            basevalue::DOUBLE => Value::Double(OrderedFloat::<f64>::decode(buf)?),
             basevalue::STRING => Value::String(String::decode(buf)?),
             other => return Err(Error::Decode(format!("Can't decode {} as value", other))),
         })
@@ -233,14 +234,14 @@ mod tests {
         }
         {
             let mut buffer = [0; PAGE_SIZE];
-            let ty = Value::Double(2.0);
+            let ty = Value::Double(2.0.into());
             ty.encode(&mut buffer.as_mut()).unwrap();
             let decoded = Value::decode(&mut buffer[..ty.encoded_size()].as_ref()).unwrap();
             assert_eq!(decoded, ty)
         }
         {
             let mut buffer = [0; PAGE_SIZE];
-            let ty = Some(Value::Double(2.0));
+            let ty = Some(Value::Double(2.0.into()));
             ty.encode(&mut buffer.as_mut()).unwrap();
             let decoded =
                 Option::<Value>::decode(&mut buffer[..ty.encoded_size()].as_ref()).unwrap();

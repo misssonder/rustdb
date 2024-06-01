@@ -8,17 +8,18 @@ use crate::storage::{PageId, RecordId, StorageResult};
 use indexmap::IndexMap;
 use std::collections::Bound;
 use std::ops::{Deref, RangeBounds};
+use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 pub struct Index {
-    buffer_pool: BufferPoolManager,
+    buffer_pool: Arc<BufferPoolManager>,
     root: RwLock<PageId>,
     max_size: usize,
 }
 
 impl<'a> Index {
-    pub async fn new<K>(buffer_pool: BufferPoolManager, max_size: usize) -> StorageResult<Self>
+    pub async fn new<K>(buffer_pool: Arc<BufferPoolManager>, max_size: usize) -> StorageResult<Self>
     where
         K: Encoder,
     {
@@ -878,7 +879,7 @@ mod tests {
         let f = tempfile::NamedTempFile::new()?;
         let disk_manager = DiskManager::new(f.path()).await?;
         let buffer_pool_manager = BufferPoolManager::new(100, 2, disk_manager).await?;
-        let index = Index::new::<u32>(buffer_pool_manager, 4).await?;
+        let index = Index::new::<u32>(Arc::new(buffer_pool_manager), 4).await?;
         Ok(index)
     }
 

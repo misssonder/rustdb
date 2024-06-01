@@ -2,7 +2,7 @@ use crate::buffer::buffer_poll_manager::{BufferPoolManager, PageRef};
 use crate::encoding::encoded_size::EncodedSize;
 use crate::storage::page::column::Column;
 use crate::storage::page::table::{TableNode, Tuple};
-use crate::storage::{page, PageId, StorageResult};
+use crate::storage::{page, PageId, RecordId, StorageResult};
 use std::sync::Arc;
 
 pub struct Table {
@@ -31,6 +31,22 @@ impl Table {
             buffer_pool,
             root: table_heap.page_id(),
         })
+    }
+
+    pub async fn try_from(
+        page_id: PageId,
+        buffer_pool: Arc<BufferPoolManager>,
+    ) -> StorageResult<Self> {
+        let table_heap = buffer_pool.fetch_page_table(page_id).await?.1;
+        Ok(Self {
+            name: table_heap.name.clone(),
+            buffer_pool,
+            root: table_heap.page_id(),
+        })
+    }
+
+    pub fn page_id(&self) -> PageId {
+        self.root
     }
 
     pub fn name(&self) -> &str {
@@ -62,20 +78,36 @@ impl Table {
             .map_err(Into::into)
     }
 
-    pub async fn insert(&self, tuple: Tuple) -> StorageResult<()> {
+    pub async fn primary_positions(&self) -> StorageResult<Vec<usize>> {
+        Ok(self
+            .table()
+            .await?
+            .1
+            .columns()
+            .iter()
+            .enumerate()
+            .filter_map(|(position, column)| {
+                if column.primary() {
+                    Some(position)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>())
+    }
+
+    pub async fn insert(&self, tuple: Tuple) -> StorageResult<RecordId> {
         let (page, mut node) = if !self.has_remaining(&tuple).await? {
             self.add_node().await?
         } else {
             self.last_node().await?
         };
-        node.insert(tuple);
-        page.page()
-            .write_table_node_back(&node)
-            .await
-            .map_err(Into::into)
+        let record_id = node.insert(tuple);
+        page.page().write_table_node_back(&node).await?;
+        Ok(record_id)
     }
 
-    pub async fn tuples(&self) -> StorageResult<Vec<Tuple>> {
+    pub async fn tuples(&self) -> StorageResult<impl DoubleEndedIterator<Item = Tuple>> {
         let mut page_id = self.table().await?.1.start;
         let mut output = Vec::new();
         loop {
@@ -87,7 +119,7 @@ impl Table {
                 Some(next) => page_id = next,
             }
         }
-        Ok(output)
+        Ok(output.into_iter())
     }
 
     async fn add_node(&self) -> StorageResult<(PageRef, TableNode)> {
@@ -187,7 +219,7 @@ mod tests {
                 ]))
                 .await?;
         }
-        assert_eq!(table.tuples().await?.len(), 4096);
+        assert_eq!(table.tuples().await?.collect::<Vec<_>>().len(), 4096);
         Ok(())
     }
 }

@@ -105,6 +105,7 @@ impl EncodedSize for Table {
 
 #[cfg(test)]
 mod tests {
+    use ordered_float::OrderedFloat;
     use super::*;
 
     use crate::sql::types::{DataType, Value};
@@ -120,7 +121,7 @@ mod tests {
             vec![Column::new("id", DataType::Bigint)
                 .with_primary(true)
                 .with_nullable(false)
-                .with_default(Value::Double(2.0))
+                .with_default(Value::Double(2.0.into()))
                 .with_unique(true)
                 .with_index(true)
                 .with_references("table_2")],
@@ -146,8 +147,8 @@ mod tests {
                 Value::Smallint(4),
                 Value::Integer(6),
                 Value::Bigint(1024),
-                Value::Float(1.0),
-                Value::Double(1.0),
+                Value::Float(1.2.into()),
+                Value::Double(OrderedFloat(1.2)),
                 Value::String("Hello world".into()),
             ])],
         };

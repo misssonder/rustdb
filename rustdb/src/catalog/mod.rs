@@ -1,7 +1,6 @@
 use crate::catalog::error::Error;
 use crate::catalog::scheme::SchemaCatalog;
 use crate::catalog::table::TableCatalog;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 mod column;
@@ -12,10 +11,10 @@ pub mod table;
 pub type SchemaId = u32;
 pub type TableId = u32;
 pub type ColumnId = u32;
-#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Copy, Clone, Serialize, Deserialize)]
-pub struct TableRefId {
-    pub schema_id: SchemaId,
-    pub table_id: TableId,
+
+mod schema_name {
+    pub const SYSTEM: &str = "rustdb_sys";
+    pub const DEFAULT: &str = "rustdb";
 }
 
 #[derive(Debug, Default)]
@@ -50,6 +49,19 @@ impl Catalog {
 
     pub fn read_id_name_by_name(&self, schema_name: &str) -> Option<SchemaId> {
         self.schema_idxs.get(schema_name).copied()
+    }
+
+    pub fn read_table(&self, schema_name: &str, table_name: &str) -> Option<&TableCatalog> {
+        self.read_schema(schema_name)
+            .and_then(|schema| schema.read_table(table_name))
+    }
+
+    pub fn read_sys_table(&self, table_name: &str) -> Option<&TableCatalog> {
+        self.read_table(schema_name::SYSTEM, table_name)
+    }
+
+    pub fn read_default_table(&self, table_name: &str) -> Option<&TableCatalog> {
+        self.read_table(schema_name::SYSTEM, table_name)
     }
 
     pub fn create_table(&mut self, schema_name: &str, table: TableCatalog) -> Result<(), Error> {

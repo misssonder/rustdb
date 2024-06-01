@@ -1,11 +1,13 @@
-use crate::catalog::TableRefId;
 use crate::storage::page::column::Column;
+use crate::storage::page::table::Tuples;
+use crate::storage::table::Table;
 use crate::{buffer, encoding};
 use std::future::Future;
 use std::sync::atomic::AtomicUsize;
 use thiserror::Error;
 
 pub mod disk;
+mod engine;
 mod index;
 pub mod page;
 pub mod table;
@@ -22,18 +24,10 @@ pub struct RecordId {
     pub slot_num: u32,
 }
 
-pub trait Engine {
-    type Table;
-    fn create_table(
-        &self,
-        id: TableRefId,
-        name: &str,
-        columns: &[Column],
-    ) -> impl Future<Output = StorageResult<()>> + Send;
-
-    fn read_table(&self, id: TableRefId) -> impl Future<Output = StorageResult<Self::Table>>;
-
-    fn delete_tale(&self, id: TableRefId) -> impl Future<Output = StorageResult<()>>;
+impl RecordId {
+    pub fn new(page_id: PageId, slot_num: u32) -> Self {
+        Self { page_id, slot_num }
+    }
 }
 
 pub type StorageResult<T> = Result<T, Error>;
@@ -45,4 +39,26 @@ pub enum Error {
     Encoding(#[from] encoding::error::Error),
     #[error("io error: {0}")]
     IO(#[from] std::io::Error),
+    #[error("{0} {1} not found")]
+    NotFound(&'static str, String),
+    #[error("{0}")]
+    Value(String),
+}
+
+pub trait Storage {
+    fn create_table<T: Into<String> + Clone>(
+        &self,
+        name: T,
+        columns: Vec<Column>,
+    ) -> impl Future<Output = StorageResult<Table>>;
+
+    fn read_table(&self, name: &str) -> impl Future<Output = StorageResult<Option<Table>>>;
+
+    fn drop_table(&self, name: &str) -> impl Future<Output = StorageResult<Option<Table>>>;
+
+    fn insert_tuples(
+        &self,
+        name: &str,
+        tuples: Tuples,
+    ) -> impl Future<Output = StorageResult<usize>>;
 }

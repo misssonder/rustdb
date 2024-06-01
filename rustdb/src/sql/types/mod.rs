@@ -1,5 +1,6 @@
 pub(crate) mod expression;
 
+use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::fmt::{Formatter, Write};
@@ -31,7 +32,7 @@ impl std::fmt::Display for DataType {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Value {
     Null,
     Boolean(bool),
@@ -39,8 +40,8 @@ pub enum Value {
     Smallint(i32),
     Integer(i64),
     Bigint(i128),
-    Float(f32),
-    Double(f64),
+    Float(OrderedFloat<f32>),
+    Double(OrderedFloat<f64>),
     String(String),
 }
 
@@ -55,8 +56,8 @@ impl std::fmt::Display for Value {
                 Value::Smallint(i) => Cow::Owned(i.to_string()),
                 Value::Integer(i) => Cow::Owned(i.to_string()),
                 Value::Bigint(i) => Cow::Owned(i.to_string()),
-                Value::Float(f) => Cow::Owned(f.to_string()),
-                Value::Double(f) => Cow::Owned(f.to_string()),
+                Value::Float(f) => Cow::Owned(f.0.to_string()),
+                Value::Double(f) => Cow::Owned(f.0.to_string()),
                 Value::String(s) => Cow::Borrowed(s.as_str()),
             }
             .as_ref(),
@@ -65,6 +66,20 @@ impl std::fmt::Display for Value {
 }
 
 impl Value {
+    pub fn datatype(&self) -> Option<DataType> {
+        Some(match self {
+            Value::Null => return None,
+            Value::Boolean(_) => DataType::Boolean,
+            Value::Tinyint(_) => DataType::Tinyint,
+            Value::Smallint(_) => DataType::Smallint,
+            Value::Integer(_) => DataType::Integer,
+            Value::Bigint(_) => DataType::Bigint,
+            Value::Float(_) => DataType::Float,
+            Value::Double(_) => DataType::Double,
+            Value::String(_) => DataType::String,
+        })
+    }
+
     pub fn check_int(&self) -> bool {
         matches!(
             self,

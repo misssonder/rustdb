@@ -14,7 +14,6 @@ use tokio::sync::{
     OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock, RwLockReadGuard, RwLockWriteGuard,
 };
 
-//fixme will be dead lock, need to be fixed
 pub struct BufferPoolManager {
     inner: RwLock<Inner>,
     disk_manager: DiskManager,

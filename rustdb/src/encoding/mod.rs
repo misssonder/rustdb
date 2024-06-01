@@ -1,5 +1,6 @@
 use crate::encoding::error::Error;
 use bytes::{Buf, BufMut};
+use ordered_float::OrderedFloat;
 
 pub mod index;
 
@@ -258,6 +259,30 @@ impl Encoder for Option<String> {
             None => u32::null_value().encode(buf),
             Some(str) => str.encode(buf),
         }
+    }
+}
+
+impl<T> Decoder for OrderedFloat<T>
+where
+    T: Decoder,
+{
+    fn decode<B>(buf: &mut B) -> Result<Self, Error>
+    where
+        B: Buf,
+    {
+        Ok(Self(T::decode(buf)?))
+    }
+}
+
+impl<T> Encoder for OrderedFloat<T>
+where
+    T: Encoder,
+{
+    fn encode<B>(&self, buf: &mut B) -> Result<(), Error>
+    where
+        B: BufMut,
+    {
+        self.0.encode(buf)
     }
 }
 
