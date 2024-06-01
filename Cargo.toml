@@ -12,6 +12,7 @@ edition = "2021"
 [workspace.dependencies]
 bytes = "1.5"
 indexmap = "2.2"
+ordered-float = "4.2.0"
 serde = "1.0.203"
 tokio = "1.36"
 thiserror = "1.0"
