@@ -99,9 +99,7 @@ impl Storage for Engine {
             .ok_or(Error::NotFound("table", name.to_string()))?;
         Ok(match primary.search(key).await? {
             None => None,
-            Some(record_id) => {
-                table.read_tuple(record_id).await?
-            }
+            Some(record_id) => table.read_tuple(record_id).await?,
         })
     }
 }

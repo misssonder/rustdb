@@ -4,10 +4,11 @@ pub mod index;
 pub mod table;
 
 use crate::buffer;
+use crate::buffer::Error;
 use crate::encoding::{Decoder, Encoder};
 use crate::storage::page::index::Node;
 use crate::storage::page::table::{Table, TableNode};
-use crate::storage::{AtomicPageId, PageId, PAGE_SIZE};
+use crate::storage::{page, AtomicPageId, PageId, PAGE_SIZE};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -111,5 +112,54 @@ impl Page {
     {
         let data = self.data_ref().read().await;
         T::decode(&mut data.as_ref()).map_err(Into::into)
+    }
+}
+
+pub trait PageEncoding {
+    fn node<K>(&self) -> Result<Node<K>, Error>
+    where
+        K: Decoder;
+    fn write_node_back<K>(&mut self, node: &Node<K>) -> Result<(), Error>
+    where
+        K: Encoder;
+
+    fn table(&self) -> Result<page::table::Table, Error>;
+
+    fn write_table_back(&mut self, table: &page::table::Table) -> Result<(), Error>;
+
+    fn table_node(&self) -> Result<page::table::TableNode, Error>;
+
+    fn write_table_node_back(&mut self, node: &page::table::TableNode) -> Result<(), Error>;
+}
+
+impl PageEncoding for [u8; PAGE_SIZE] {
+    fn node<K>(&self) -> Result<Node<K>, Error>
+    where
+        K: Decoder,
+    {
+        Node::decode(&mut self.as_ref()).map_err(Into::into)
+    }
+
+    fn write_node_back<K>(&mut self, node: &Node<K>) -> Result<(), Error>
+    where
+        K: Encoder,
+    {
+        node.encode(&mut self.as_mut()).map_err(Into::into)
+    }
+
+    fn table(&self) -> Result<Table, Error> {
+        Table::decode(&mut self.as_ref()).map_err(Into::into)
+    }
+
+    fn write_table_back(&mut self, table: &Table) -> Result<(), Error> {
+        table.encode(&mut self.as_mut()).map_err(Into::into)
+    }
+
+    fn table_node(&self) -> Result<TableNode, Error> {
+        TableNode::decode(&mut self.as_ref()).map_err(Into::into)
+    }
+
+    fn write_table_node_back(&mut self, node: &TableNode) -> Result<(), Error> {
+        node.encode(&mut self.as_mut()).map_err(Into::into)
     }
 }

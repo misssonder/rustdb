@@ -1,10 +1,10 @@
 use crate::buffer;
 use crate::buffer::buffer_poll_manager::{
-    BufferPoolManager, OwnedPageDataReadGuard, OwnedPageDataWriteGuard, PageEncoding,
+    BufferPoolManager, OwnedPageDataReadGuard, OwnedPageDataWriteGuard,
 };
 use crate::encoding::{Decoder, Encoder};
 use crate::storage::page::index::{Header, Internal, Leaf, Node};
-use crate::storage::page::PageTrait;
+use crate::storage::page::{PageEncoding, PageTrait};
 use crate::storage::{PageId, RecordId, StorageResult};
 use indexmap::IndexMap;
 use std::collections::Bound;

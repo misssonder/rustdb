@@ -1,10 +1,10 @@
 use crate::buffer::buffer_poll_manager::{
-    BufferPoolManager, OwnedPageDataReadGuard, OwnedPageDataWriteGuard, PageEncoding, PageRef,
+    BufferPoolManager, OwnedPageDataReadGuard, OwnedPageDataWriteGuard, PageRef,
 };
 use crate::encoding::encoded_size::EncodedSize;
 use crate::storage::page::column::Column;
 use crate::storage::page::table::{TableNode, Tuple};
-use crate::storage::page::PageTrait;
+use crate::storage::page::{PageEncoding, PageTrait};
 use crate::storage::{page, PageId, RecordId, StorageResult};
 use std::sync::Arc;
 
@@ -256,7 +256,7 @@ mod tests {
             let record_id = table.insert(tuple.clone()).await?;
             assert_eq!(table.read_tuple(record_id).await?, Some(tuple));
             index.insert(id, record_id).await?;
-            println!("insert: {}",id);
+            println!("insert: {}", id);
         }
         assert_eq!(
             table.tuples().await?.collect::<Vec<_>>(),
