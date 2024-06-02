@@ -1,3 +1,4 @@
+use crate::storage::page::PageTrait;
 use crate::storage::{PageId, RecordId};
 use std::cmp::Ordering;
 use std::fmt::Debug;
@@ -9,6 +10,21 @@ pub enum Node<K> {
     Leaf(Leaf<K>),
 }
 
+impl<K> PageTrait for Node<K> {
+    fn page_id(&self) -> PageId {
+        match self {
+            Node::Internal(node) => node.page_id(),
+            Node::Leaf(node) => node.page_id(),
+        }
+    }
+
+    fn set_page_id(&mut self, page_id: PageId) {
+        match self {
+            Node::Internal(internal) => internal.set_page_id(page_id),
+            Node::Leaf(leaf) => leaf.set_page_id(page_id),
+        }
+    }
+}
 impl<K> Node<K> {
     pub fn is_overflow(&self) -> bool {
         match self {
@@ -50,13 +66,6 @@ impl<K> Node<K> {
         }
     }
 
-    pub fn page_id(&self) -> PageId {
-        match self {
-            Node::Internal(node) => node.page_id(),
-            Node::Leaf(node) => node.page_id(),
-        }
-    }
-
     pub fn set_next(&mut self, page_id: PageId) {
         match self {
             Node::Internal(node) => node.set_next(page_id),
@@ -71,12 +80,6 @@ impl<K> Node<K> {
         }
     }
 
-    pub fn set_page_id(&mut self, page_id: PageId) {
-        match self {
-            Node::Internal(internal) => internal.set_page_id(page_id),
-            Node::Leaf(leaf) => leaf.set_page_id(page_id),
-        }
-    }
     pub fn max_size(&mut self) -> usize {
         match self {
             Node::Internal(internal) => internal.max_size(),

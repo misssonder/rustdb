@@ -105,8 +105,8 @@ impl EncodedSize for Table {
 
 #[cfg(test)]
 mod tests {
-    use ordered_float::OrderedFloat;
     use super::*;
+    use ordered_float::OrderedFloat;
 
     use crate::sql::types::{DataType, Value};
     use crate::storage::PAGE_SIZE;

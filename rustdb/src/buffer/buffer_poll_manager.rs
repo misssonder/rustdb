@@ -4,7 +4,7 @@ use crate::encoding::{Decoder, Encoder};
 use crate::storage::disk::disk_manager::DiskManager;
 use crate::storage::page::index::Node;
 use crate::storage::page::table::{Table, TableNode};
-use crate::storage::page::Page;
+use crate::storage::page::{Page, PageTrait};
 use crate::storage::{PageId, PAGE_SIZE};
 use std::collections::{HashMap, VecDeque};
 use std::ops::{Deref, DerefMut};
@@ -238,12 +238,12 @@ impl BufferPoolManager {
         Ok(page)
     }
 
-    pub async fn new_page_write_owned<K>(
+    pub async fn new_page_write_owned<T>(
         &self,
-        node: &mut Node<K>,
+        node: &mut T,
     ) -> Result<OwnedPageDataWriteGuard, Error>
     where
-        K: Encoder,
+        T: Encoder + PageTrait,
     {
         let guard = self
             .new_page_ref()
@@ -320,30 +320,6 @@ impl BufferPoolManager {
             .ok_or(Error::BufferInsufficient)?;
         let table_node = page.page.table_node().await?;
         Ok((page, table_node))
-    }
-}
-pub trait NodeTrait {
-    fn node<K>(&self) -> Result<Node<K>, Error>
-    where
-        K: Decoder;
-    fn write_back<K>(&mut self, node: &Node<K>) -> Result<(), Error>
-    where
-        K: Encoder;
-}
-
-impl NodeTrait for [u8; PAGE_SIZE] {
-    fn node<K>(&self) -> Result<Node<K>, Error>
-    where
-        K: Decoder,
-    {
-        Node::decode(&mut self.as_ref()).map_err(Into::into)
-    }
-
-    fn write_back<K>(&mut self, node: &Node<K>) -> Result<(), Error>
-    where
-        K: Encoder,
-    {
-        node.encode(&mut self.as_mut()).map_err(Into::into)
     }
 }
 pub struct PageRef {

@@ -1,9 +1,10 @@
 use crate::buffer;
 use crate::buffer::buffer_poll_manager::{
-    BufferPoolManager, NodeTrait, OwnedPageDataReadGuard, OwnedPageDataWriteGuard,
+    BufferPoolManager, OwnedPageDataReadGuard, OwnedPageDataWriteGuard,
 };
 use crate::encoding::{Decoder, Encoder};
 use crate::storage::page::index::{Header, Internal, Leaf, Node};
+use crate::storage::page::{PageEncoding, PageTrait};
 use crate::storage::{PageId, RecordId, StorageResult};
 use indexmap::IndexMap;
 use std::collections::Bound;
@@ -224,7 +225,7 @@ impl<'a> Index {
                         Ok(index) => leaf.kv[index] = (key.clone(), value),
                         Err(index) => leaf.insert(index, key.clone(), value),
                     };
-                    latch.write_back(&node)?;
+                    latch.write_node_back(&node)?;
                 }
             }
             if !node.is_overflow() {
@@ -238,7 +239,7 @@ impl<'a> Index {
                     let mut child_latch = self.buffer_pool.fetch_page_write_owned(*child).await?;
                     let mut child_node = child_latch.node::<K>()?;
                     child_node.set_parent(sibling_page_id);
-                    child_latch.write_back(&child_node)?;
+                    child_latch.write_node_back(&child_node)?;
                 }
             }
             node.set_next(sibling.page_id());
@@ -258,9 +259,9 @@ impl<'a> Index {
                     .unwrap_or_else(|index| index);
                 internal.insert(index, median_key.clone(), sibling_page_id);
 
-                parent_latch.write_back(&parent_node)?;
-                sibling_latch.write_back(&sibling)?;
-                latch.write_back(&node)?;
+                parent_latch.write_node_back(&parent_node)?;
+                sibling_latch.write_node_back(&sibling)?;
+                latch.write_node_back(&node)?;
                 page_id = parent_latch.page_id();
             } else {
                 let mut parent_node = Node::Internal(Internal {
@@ -289,9 +290,9 @@ impl<'a> Index {
                 node.set_parent(parent_node.page_id());
                 sibling.set_parent(parent_node.page_id());
 
-                parent_latch.write_back(&parent_node)?;
-                sibling_latch.write_back(&sibling)?;
-                latch.write_back(&node)?;
+                parent_latch.write_node_back(&parent_node)?;
+                sibling_latch.write_node_back(&sibling)?;
+                latch.write_node_back(&node)?;
                 route
                     .nodes
                     .insert(parent_id, RouteNode::new(Latch::Write(parent_latch), 1));
@@ -323,7 +324,7 @@ impl<'a> Index {
                     };
                 }
             }
-            latch.write_back(&node)?;
+            latch.write_node_back(&node)?;
             if !node.is_underflow() {
                 break;
             }
@@ -397,13 +398,13 @@ impl<'a> Index {
                         let (child_page, mut child) =
                             self.buffer_pool.fetch_page_node::<K>(steal.1).await?;
                         child.set_parent(internal.page_id());
-                        child_page.data_write().await.write_back(&child)?;
+                        child_page.data_write().await.write_node_back(&child)?;
                         prev_page
                             .data_write()
                             .await
-                            .write_back(&Node::Internal(prev_node))?;
-                        latch.write_back(&Node::Internal(internal))?;
-                        parent_latch.write_back(&Node::Internal(parent))?;
+                            .write_node_back(&Node::Internal(prev_node))?;
+                        latch.write_node_back(&Node::Internal(internal))?;
+                        parent_latch.write_node_back(&Node::Internal(parent))?;
                         return Ok(Some(()));
                     }
                 }
@@ -421,13 +422,13 @@ impl<'a> Index {
                         let (child_page, mut child) =
                             self.buffer_pool.fetch_page_node::<K>(steal.1).await?;
                         child.set_parent(internal.page_id());
-                        child_page.data_write().await.write_back(&child)?;
+                        child_page.data_write().await.write_node_back(&child)?;
                         next_page
                             .data_write()
                             .await
-                            .write_back(&Node::Internal(next_node))?;
-                        latch.write_back(&Node::Internal(internal))?;
-                        parent_latch.write_back(&Node::Internal(parent))?;
+                            .write_node_back(&Node::Internal(next_node))?;
+                        latch.write_node_back(&Node::Internal(internal))?;
+                        parent_latch.write_node_back(&Node::Internal(parent))?;
                         return Ok(Some(()));
                     }
                 }
@@ -446,9 +447,9 @@ impl<'a> Index {
                         prev_page
                             .data_write()
                             .await
-                            .write_back(&Node::Leaf(prev_node))?;
-                        latch.write_back(&Node::Leaf(leaf))?;
-                        parent_latch.write_back(&Node::Internal(parent))?;
+                            .write_node_back(&Node::Leaf(prev_node))?;
+                        latch.write_node_back(&Node::Leaf(leaf))?;
+                        parent_latch.write_node_back(&Node::Internal(parent))?;
                         return Ok(Some(()));
                     }
                 }
@@ -466,9 +467,9 @@ impl<'a> Index {
                         next_page
                             .data_write()
                             .await
-                            .write_back(&Node::Leaf(next_node))?;
-                        latch.write_back(&Node::Leaf(leaf))?;
-                        parent_latch.write_back(&Node::Internal(parent))?;
+                            .write_node_back(&Node::Leaf(next_node))?;
+                        latch.write_node_back(&Node::Leaf(leaf))?;
+                        parent_latch.write_node_back(&Node::Internal(parent))?;
                         return Ok(Some(()));
                     }
                 }
@@ -526,7 +527,7 @@ impl<'a> Index {
                     let (child_page, mut child) =
                         self.buffer_pool.fetch_page_node::<K>(child_id).await?;
                     child.set_parent(left_node.page_id());
-                    child_page.data_write().await.write_back(&child)?;
+                    child_page.data_write().await.write_node_back(&child)?;
                 }
                 if parent.header.size == 0 && parent.parent().is_none() {
                     //change root node
@@ -535,13 +536,13 @@ impl<'a> Index {
                         *root_latch = left_node.page_id();
                     };
                     left_node.header.parent = None;
-                    left_latch.write_back(&Node::Internal(left_node))?;
-                    right_latch.write_back(&Node::Internal(right_node))?;
+                    left_latch.write_node_back(&Node::Internal(left_node))?;
+                    right_latch.write_node_back(&Node::Internal(right_node))?;
                     return Ok(true);
                 }
-                left_latch.write_back(&Node::Internal(left_node))?;
-                right_latch.write_back(&Node::Internal(right_node))?;
-                parent_latch.write_back(&Node::Internal(parent))?;
+                left_latch.write_node_back(&Node::Internal(left_node))?;
+                right_latch.write_node_back(&Node::Internal(right_node))?;
+                parent_latch.write_node_back(&Node::Internal(parent))?;
                 Ok(false)
             }
             Node::Leaf(leaf) => {
@@ -571,13 +572,13 @@ impl<'a> Index {
                         *root_latch = left_node.page_id();
                     };
                     left_node.header.parent = None;
-                    left_latch.write_back(&Node::Leaf(left_node))?;
-                    right_latch.write_back(&Node::Leaf(right_node))?;
+                    left_latch.write_node_back(&Node::Leaf(left_node))?;
+                    right_latch.write_node_back(&Node::Leaf(right_node))?;
                     return Ok(true);
                 }
-                left_latch.write_back(&Node::Leaf(left_node))?;
-                right_latch.write_back(&Node::Leaf(right_node))?;
-                parent_latch.write_back(&Node::Internal(parent))?;
+                left_latch.write_node_back(&Node::Leaf(left_node))?;
+                right_latch.write_node_back(&Node::Leaf(right_node))?;
+                parent_latch.write_node_back(&Node::Internal(parent))?;
                 Ok(false)
             }
         }
@@ -1146,6 +1147,38 @@ mod tests {
             let val = index.search(&(i as u32)).await?;
             assert!(val.is_none());
         }
+        insert_concurrency_inner(index.clone(), len, concurrency).await?;
+        for i in 0..len {
+            let val = index.search(&(i as u32)).await?;
+            println!("{}", index.root.read().await);
+            assert!(val.is_some());
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn multiple_index() -> StorageResult<()> {
+        let f = tempfile::NamedTempFile::new()?;
+        let disk_manager = DiskManager::new(f.path()).await?;
+        let buffer_pool_manager = Arc::new(BufferPoolManager::new(100, 2, disk_manager).await?);
+        let index1 = Index::new::<u32>(buffer_pool_manager.clone(), 128).await?;
+        let index2 = Index::new::<u32>(buffer_pool_manager.clone(), 128).await?;
+        let keys: Vec<u32> = (1..100).collect::<Vec<_>>();
+        insert_inner(&index1, &keys.iter().copied().rev().collect::<Vec<_>>()).await?;
+        for i in &keys {
+            let val = index1.search(i).await?;
+            assert!(val.is_some());
+            assert_eq!(*i, val.unwrap().page_id as u32);
+        }
+        assert!(index1.search(&101).await?.is_none());
+
+        insert_inner(&index2, &keys.iter().copied().rev().collect::<Vec<_>>()).await?;
+        for i in &keys {
+            let val = index2.search(i).await?;
+            assert!(val.is_some());
+            assert_eq!(*i, val.unwrap().page_id as u32);
+        }
+        assert!(index2.search(&101).await?.is_none());
         Ok(())
     }
 }
