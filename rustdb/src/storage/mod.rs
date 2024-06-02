@@ -1,5 +1,6 @@
+use crate::encoding::{Decoder, Encoder};
 use crate::storage::page::column::Column;
-use crate::storage::page::table::Tuples;
+use crate::storage::page::table::{Tuple, Tuples};
 use crate::storage::table::Table;
 use crate::{buffer, encoding};
 use std::future::Future;
@@ -61,4 +62,12 @@ pub trait Storage {
         name: &str,
         tuples: Tuples,
     ) -> impl Future<Output = StorageResult<usize>>;
+
+    fn read_tuple<K>(
+        &self,
+        name: &str,
+        key: &K,
+    ) -> impl Future<Output = StorageResult<Option<Tuple>>>
+    where
+        K: Decoder + Encoder + Ord;
 }

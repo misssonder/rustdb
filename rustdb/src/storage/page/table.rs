@@ -1,5 +1,6 @@
 use crate::sql::types::Value;
 use crate::storage::page::column::Column;
+use crate::storage::page::PageTrait;
 use crate::storage::{PageId, RecordId};
 
 /// Table is List, it contains a bunch of pages which can be decoded into TableNode
@@ -17,6 +18,16 @@ pub struct Table {
     pub(crate) columns: Vec<Column>,
 }
 
+impl PageTrait for Table {
+    fn page_id(&self) -> PageId {
+        self.page_id
+    }
+
+    fn set_page_id(&mut self, page_id: PageId) {
+        self.page_id = page_id
+    }
+}
+
 impl Table {
     pub fn new(
         name: impl Into<String>,
@@ -31,14 +42,6 @@ impl Table {
             end: node_page_id,
             columns,
         }
-    }
-
-    pub fn set_page_id(&mut self, page_id: PageId) {
-        self.page_id = page_id
-    }
-
-    pub fn page_id(&self) -> PageId {
-        self.page_id
     }
 
     pub fn set_start(&mut self, page_id: PageId) {
@@ -66,6 +69,16 @@ pub struct TableNode {
     pub(crate) page_id: PageId,
     pub(crate) next: Option<PageId>,
     pub(crate) tuples: Tuples,
+}
+
+impl PageTrait for TableNode {
+    fn page_id(&self) -> PageId {
+        self.page_id
+    }
+
+    fn set_page_id(&mut self, page_id: PageId) {
+        self.page_id = page_id
+    }
 }
 
 impl TableNode {
@@ -98,7 +111,7 @@ impl TableNode {
         RecordId::new(self.page_id, slot_num)
     }
 }
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Tuple {
     pub(crate) values: Vec<Value>,
 }

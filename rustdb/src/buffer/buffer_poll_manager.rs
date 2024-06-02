@@ -4,8 +4,8 @@ use crate::encoding::{Decoder, Encoder};
 use crate::storage::disk::disk_manager::DiskManager;
 use crate::storage::page::index::Node;
 use crate::storage::page::table::{Table, TableNode};
-use crate::storage::page::Page;
-use crate::storage::{PageId, PAGE_SIZE};
+use crate::storage::page::{Page, PageTrait};
+use crate::storage::{page, PageId, PAGE_SIZE};
 use std::collections::{HashMap, VecDeque};
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -238,12 +238,12 @@ impl BufferPoolManager {
         Ok(page)
     }
 
-    pub async fn new_page_write_owned<K>(
+    pub async fn new_page_write_owned<T>(
         &self,
-        node: &mut Node<K>,
+        node: &mut T,
     ) -> Result<OwnedPageDataWriteGuard, Error>
     where
-        K: Encoder,
+        T: Encoder + PageTrait,
     {
         let guard = self
             .new_page_ref()
@@ -322,16 +322,24 @@ impl BufferPoolManager {
         Ok((page, table_node))
     }
 }
-pub trait NodeTrait {
+pub trait PageEncoding {
     fn node<K>(&self) -> Result<Node<K>, Error>
     where
         K: Decoder;
-    fn write_back<K>(&mut self, node: &Node<K>) -> Result<(), Error>
+    fn write_node_back<K>(&mut self, node: &Node<K>) -> Result<(), Error>
     where
         K: Encoder;
+
+    fn table(&self) -> Result<page::table::Table, Error>;
+
+    fn write_table_back(&mut self, table: &page::table::Table) -> Result<(), Error>;
+
+    fn table_node(&self) -> Result<page::table::TableNode, Error>;
+
+    fn write_table_node_back(&mut self, node: &page::table::TableNode) -> Result<(), Error>;
 }
 
-impl NodeTrait for [u8; PAGE_SIZE] {
+impl PageEncoding for [u8; PAGE_SIZE] {
     fn node<K>(&self) -> Result<Node<K>, Error>
     where
         K: Decoder,
@@ -339,10 +347,26 @@ impl NodeTrait for [u8; PAGE_SIZE] {
         Node::decode(&mut self.as_ref()).map_err(Into::into)
     }
 
-    fn write_back<K>(&mut self, node: &Node<K>) -> Result<(), Error>
+    fn write_node_back<K>(&mut self, node: &Node<K>) -> Result<(), Error>
     where
         K: Encoder,
     {
+        node.encode(&mut self.as_mut()).map_err(Into::into)
+    }
+
+    fn table(&self) -> Result<Table, Error> {
+        Table::decode(&mut self.as_ref()).map_err(Into::into)
+    }
+
+    fn write_table_back(&mut self, table: &Table) -> Result<(), Error> {
+        table.encode(&mut self.as_mut()).map_err(Into::into)
+    }
+
+    fn table_node(&self) -> Result<TableNode, Error> {
+        TableNode::decode(&mut self.as_ref()).map_err(Into::into)
+    }
+
+    fn write_table_node_back(&mut self, node: &TableNode) -> Result<(), Error> {
         node.encode(&mut self.as_mut()).map_err(Into::into)
     }
 }

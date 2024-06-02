@@ -20,6 +20,12 @@ pub struct Page {
     pub is_dirty: AtomicBool,
 }
 
+pub trait PageTrait {
+    fn page_id(&self) -> PageId;
+
+    fn set_page_id(&mut self, page_id: PageId);
+}
+
 impl Page {
     pub fn new(page_id: PageId) -> Self {
         Self {

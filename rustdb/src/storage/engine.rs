@@ -1,8 +1,9 @@
 use crate::buffer::buffer_poll_manager::BufferPoolManager;
+use crate::encoding::{Decoder, Encoder};
 use crate::sql::types::Value;
 use crate::storage::index::Index;
 use crate::storage::page::column::Column;
-use crate::storage::page::table::Tuples;
+use crate::storage::page::table::{Tuple, Tuples};
 use crate::storage::table::Table;
 use crate::storage::{Error, PageId, Storage, StorageResult};
 use std::collections::BTreeMap;
@@ -44,7 +45,13 @@ impl Storage for Engine {
     }
 
     async fn drop_table(&self, name: &str) -> StorageResult<Option<Table>> {
-        todo!()
+        // todo delete table and index actually
+        Ok(match self.tables.write().await.remove(name) {
+            None => None,
+            Some((table_page_id, _)) => {
+                Some(Table::try_from(table_page_id, self.buffer_pool.clone()).await?)
+            }
+        })
     }
 
     async fn insert_tuples(&self, name: &str, tuples: Tuples) -> StorageResult<usize> {
@@ -77,11 +84,37 @@ impl Storage for Engine {
         }
         Ok(count)
     }
+
+    async fn read_tuple<K>(&self, name: &str, key: &K) -> StorageResult<Option<Tuple>>
+    where
+        K: Decoder + Encoder + Ord,
+    {
+        let primary = self
+            .read_primary(name)
+            .await
+            .ok_or(Error::NotFound("table", name.to_string()))?;
+        let table = self
+            .read_table(name)
+            .await?
+            .ok_or(Error::NotFound("table", name.to_string()))?;
+        Ok(match primary.search(key).await? {
+            None => None,
+            Some(record_id) => {
+                table.read_tuple(record_id).await?
+            }
+        })
+    }
 }
 
 impl Engine {
+    pub fn new(buffer_pool: Arc<BufferPoolManager>) -> Self {
+        Self {
+            tables: Default::default(),
+            buffer_pool,
+        }
+    }
     pub fn evaluate_tree_size(_columns: &[Column]) -> usize {
-        1024
+        64
     }
 
     pub async fn read_primary(&self, name: &str) -> Option<Arc<Index>> {
@@ -90,5 +123,46 @@ impl Engine {
             .await
             .get(name)
             .map(|(_, index)| index.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sql::types::DataType;
+    use crate::storage::disk::disk_manager::DiskManager;
+    use crate::storage::page::table::Tuple;
+
+    #[tokio::test]
+    async fn engine() -> StorageResult<()> {
+        let f = tempfile::NamedTempFile::new()?;
+        let disk_manager = DiskManager::new(f.path()).await?;
+        let buffer_pool = BufferPoolManager::new(100, 2, disk_manager).await?;
+        let engine = Engine::new(Arc::new(buffer_pool));
+        let column_id = Column::new("id", DataType::Bigint)
+            .with_primary(true)
+            .with_unique(true);
+        let column_name =
+            Column::new("name", DataType::String).with_default(Value::String("hello".to_string()));
+        let len = 10240;
+        let tuples = (0..len)
+            .map(|id| Tuple::new(vec![Value::Bigint(id), Value::String("Mike".to_string())]))
+            .collect::<Vec<_>>();
+        engine
+            .create_table("user", vec![column_id.clone(), column_name.clone()])
+            .await?;
+        engine.insert_tuples("user", tuples.clone()).await?;
+        let table = engine.read_table("user").await?.unwrap();
+        let tuples = table.tuples().await?.collect::<Vec<_>>();
+        for id in 0..len {
+            assert_eq!(
+                engine.read_tuple("user", &vec![Value::Bigint(id)]).await?,
+                Some(Tuple::new(vec![
+                    Value::Bigint(id),
+                    Value::String("Mike".to_string())
+                ]))
+            );
+        }
+        Ok(())
     }
 }
