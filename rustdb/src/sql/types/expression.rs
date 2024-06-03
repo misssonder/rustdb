@@ -64,7 +64,7 @@ impl Expression {
                     Value::Double(OrderedFloat(lhs.0 + rhs.0))
                 }
                 (Value::Null, Value::Null) => Value::Null,
-                /// cast float
+                // cast float
                 (Value::Float(lhs), Value::Double(rhs)) => {
                     Value::Double(OrderedFloat(lhs.0 as f64 + rhs.0))
                 }
@@ -97,7 +97,7 @@ impl Expression {
                     Value::Double(OrderedFloat(lhs.0 - rhs.0))
                 }
                 (Value::Null, Value::Null) => Value::Null,
-                /// cast float
+                // cast float
                 (Value::Float(lhs), Value::Double(rhs)) => {
                     Value::Double(OrderedFloat(lhs.0 as f64 - rhs.0))
                 }
@@ -133,7 +133,7 @@ impl Expression {
                     Value::Double(OrderedFloat(lhs.0 * rhs.0))
                 }
                 (Value::Null, Value::Null) => Value::Null,
-                /// cast float
+                // cast float
                 (Value::Float(lhs), Value::Double(rhs)) => {
                     Value::Double(OrderedFloat(lhs.0 as f64 * rhs.0))
                 }
@@ -148,7 +148,7 @@ impl Expression {
                 }
             }),
             Expression::Divide(lhs, rhs) => Ok(match (lhs.evaluate()?, rhs.evaluate()?) {
-                /// check zero
+                // check zero
                 (lhs, rhs) if (lhs.check_int() || lhs.check_float()) && rhs.check_zero() => {
                     return Err(RustDBError::Value(format!(
                         "Can't divide {} and {}",
@@ -176,7 +176,7 @@ impl Expression {
                     Value::Double(OrderedFloat(lhs.0 / rhs.0))
                 }
                 (Value::Null, Value::Null) => Value::Null,
-                /// cast float
+                // cast float
                 (Value::Float(lhs), Value::Double(rhs)) => {
                     Value::Double(OrderedFloat(lhs.0 as f64 / rhs.0))
                 }
@@ -210,7 +210,7 @@ impl Expression {
                     Value::Double(OrderedFloat(lhs.powf(rhs.0)))
                 }
                 (Value::Null, Value::Null) => Value::Null,
-                /// cast float
+                // cast float
                 (Value::Double(lhs), Value::Float(rhs)) => {
                     Value::Double(OrderedFloat(lhs.0.powf(rhs.0 as f64)))
                 }

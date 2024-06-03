@@ -6,7 +6,6 @@ use bytes::{Buf, BufMut};
 use ordered_float::OrderedFloat;
 
 mod basetype {
-    use std::mem;
 
     pub const BOOLEAN: u8 = 0;
     pub const TINYINT: u8 = 1;
@@ -16,7 +15,6 @@ mod basetype {
     pub const FLOAT: u8 = 5;
     pub const DOUBLE: u8 = 6;
     pub const STRING: u8 = 7;
-    pub const ENCODED_SIZE: usize = mem::size_of::<u8>();
 }
 
 mod basevalue {

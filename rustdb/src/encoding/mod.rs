@@ -246,7 +246,7 @@ impl Decoder for Option<String> {
         }
         String::from_utf8(bytes)
             .map(Some)
-            .map_err(|err| Error::Decode("Can't read bytes in utf-8".into()))
+            .map_err(|_err| Error::Decode("Can't read bytes in utf-8".into()))
     }
 }
 

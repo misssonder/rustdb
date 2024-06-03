@@ -10,7 +10,6 @@ use indexmap::IndexMap;
 use std::collections::Bound;
 use std::ops::{Deref, RangeBounds};
 use std::sync::Arc;
-use tokio::io::AsyncWriteExt;
 use tokio::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 pub struct Index {
@@ -55,7 +54,7 @@ impl<'a> Index {
                 let leaf = guard.node::<K>()?.assume_leaf();
                 Ok(leaf.search(key))
             }
-            Latch::Write(ref guard) => {
+            Latch::Write(ref _guard) => {
                 unreachable!()
             }
         }

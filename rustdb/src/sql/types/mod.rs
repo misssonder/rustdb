@@ -3,7 +3,7 @@ pub(crate) mod expression;
 use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
-use std::fmt::{Formatter, Write};
+use std::fmt::{Formatter};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum DataType {
