@@ -14,6 +14,7 @@ impl Decoder for Tuple {
     {
         Ok(Self {
             values: Vec::<Value>::decode(buf)?,
+            deleted: bool::decode(buf)?,
         })
     }
 }
@@ -24,13 +25,14 @@ impl Encoder for Tuple {
         B: BufMut,
     {
         self.values.encode(buf)?;
+        self.deleted.encode(buf)?;
         Ok(())
     }
 }
 
 impl EncodedSize for Tuple {
     fn encoded_size(&self) -> usize {
-        self.values.encoded_size()
+        self.values.encoded_size() + self.deleted.encoded_size()
     }
 }
 

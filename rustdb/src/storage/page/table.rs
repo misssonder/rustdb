@@ -114,13 +114,17 @@ impl TableNode {
 #[derive(Debug, PartialEq, Clone)]
 pub struct Tuple {
     pub(crate) values: Vec<Value>,
+    pub(crate) deleted: bool,
 }
 
 pub type Tuples = Vec<Tuple>;
 
 impl Tuple {
     pub fn new(values: Vec<Value>) -> Self {
-        Self { values }
+        Self {
+            values,
+            deleted: false,
+        }
     }
 
     pub fn field(&self, position: usize) -> Value {
