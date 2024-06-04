@@ -49,6 +49,7 @@ pub enum Error {
 }
 
 pub trait Storage {
+    type Key: Decoder + Encoder + Ord;
     fn create_table<T: Into<String> + Clone>(
         &self,
         name: T,
@@ -65,21 +66,17 @@ pub trait Storage {
         tuples: Tuples,
     ) -> impl Future<Output = StorageResult<usize>>;
 
-    fn read_tuple<K>(
+    fn read_tuple(
         &self,
         name: &str,
-        key: &K,
-    ) -> impl Future<Output = StorageResult<Option<Tuple>>>
-    where
-        K: Decoder + Encoder + Ord;
+        key: &Self::Key,
+    ) -> impl Future<Output = StorageResult<Option<Tuple>>>;
 
-    fn delete_tuple<K>(
+    fn delete_tuple(
         &self,
         name: &str,
-        key: &K,
-    ) -> impl Future<Output = StorageResult<Option<Tuple>>>
-    where
-        K: Decoder + Encoder + Ord + Clone;
+        key: &Self::Key,
+    ) -> impl Future<Output = StorageResult<Option<Tuple>>>;
 
     fn update_tuple(
         &self,
@@ -87,12 +84,11 @@ pub trait Storage {
         tuple: Tuple,
     ) -> impl Future<Output = StorageResult<Option<()>>>;
 
-    fn scan<K, R>(
+    fn scan<R>(
         &self,
         name: &str,
         range: R,
     ) -> impl Future<Output = StorageResult<impl Stream<Item = StorageResult<Tuple>>>>
     where
-        K: Decoder + Encoder + Ord,
-        R: RangeBounds<K>;
+        R: RangeBounds<Self::Key>;
 }

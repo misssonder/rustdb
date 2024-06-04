@@ -8,18 +8,20 @@ use crate::storage::page::{PageEncoding, PageTrait};
 use crate::storage::{PageId, RecordId, StorageResult};
 use indexmap::IndexMap;
 use std::collections::Bound;
+use std::marker::PhantomData;
 use std::ops::{Deref, RangeBounds};
 use std::sync::Arc;
 use tokio::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-pub struct Index {
+pub struct Index<K> {
     buffer_pool: Arc<BufferPoolManager>,
     root: RwLock<PageId>,
     max_size: usize,
+    _data: PhantomData<K>,
 }
 
-impl<'a> Index {
-    pub async fn new<K>(buffer_pool: Arc<BufferPoolManager>, max_size: usize) -> StorageResult<Self>
+impl<'a, K> Index<K> {
+    pub async fn new(buffer_pool: Arc<BufferPoolManager>, max_size: usize) -> StorageResult<Self>
     where
         K: Encoder,
     {
@@ -39,9 +41,10 @@ impl<'a> Index {
             buffer_pool,
             root: RwLock::new(node.page_id()),
             max_size,
+            _data: Default::default(),
         })
     }
-    pub async fn search<K>(&self, key: &K) -> StorageResult<Option<RecordId>>
+    pub async fn search(&self, key: &K) -> StorageResult<Option<RecordId>>
     where
         K: Decoder + Encoder + Ord,
     {
@@ -60,7 +63,7 @@ impl<'a> Index {
         }
     }
 
-    pub async fn search_range<K, R>(&self, range: R) -> StorageResult<Vec<RecordId>>
+    pub async fn search_range<R>(&self, range: R) -> StorageResult<Vec<RecordId>>
     where
         K: Decoder + Encoder + Ord,
         R: RangeBounds<K>,
@@ -80,7 +83,7 @@ impl<'a> Index {
                     self.find_route(KeyCondition::Equal(key), &mut route)
                         .await?
                 }
-                Bound::Unbounded => self.find_route::<K>(KeyCondition::Min, &mut route).await?,
+                Bound::Unbounded => self.find_route(KeyCondition::Min, &mut route).await?,
             };
             let mut latch = route
                 .nodes
@@ -175,7 +178,7 @@ impl<'a> Index {
         Ok(output)
     }
 
-    pub async fn insert<K>(&self, key: K, value: RecordId) -> StorageResult<()>
+    pub async fn insert(&self, key: K, value: RecordId) -> StorageResult<()>
     where
         K: Decoder + Encoder + Ord + Default + Clone,
     {
@@ -187,7 +190,7 @@ impl<'a> Index {
         self.insert_inner(page_id, route, key, value).await
     }
 
-    pub async fn delete<K>(&self, key: &K) -> StorageResult<Option<(K, RecordId)>>
+    pub async fn delete(&self, key: &K) -> StorageResult<Option<(K, RecordId)>>
     where
         K: Decoder + Encoder + Ord + Clone,
     {
@@ -199,7 +202,7 @@ impl<'a> Index {
         self.delete_inner(page_id, route, key).await
     }
 
-    async fn insert_inner<K>(
+    async fn insert_inner(
         &self,
         mut page_id: PageId,
         mut route: Route<'_>,
@@ -300,7 +303,7 @@ impl<'a> Index {
         }
     }
 
-    async fn delete_inner<K>(
+    async fn delete_inner(
         &self,
         mut page_id: PageId,
         mut route: Route<'_>,
@@ -337,14 +340,14 @@ impl<'a> Index {
                         .latch
                         .assume_write_mut();
                     if self
-                        .steal::<K>(parent_latch, &mut latch, route_node.parent_index)
+                        .steal(parent_latch, &mut latch, route_node.parent_index)
                         .await?
                         .is_some()
                     {
                         break;
                     }
                     if self
-                        .merge::<K>(
+                        .merge(
                             parent_latch,
                             latch,
                             &mut route.root_latch,
@@ -361,7 +364,7 @@ impl<'a> Index {
         Ok(res)
     }
 
-    async fn steal<K>(
+    async fn steal(
         &self,
         parent_latch: &mut OwnedPageDataWriteGuard,
         latch: &mut OwnedPageDataWriteGuard,
@@ -480,7 +483,7 @@ impl<'a> Index {
 
     /// merge this node and it's prev node or next node
     /// return true if the node which been merged become the root
-    async fn merge<K>(
+    async fn merge(
         &self,
         parent_latch: &mut OwnedPageDataWriteGuard,
         latch: OwnedPageDataWriteGuard,
@@ -586,7 +589,7 @@ impl<'a> Index {
     /// take latches according to latch crabbin
     /// if current node is safe, then release parent latch
     /// if current node is unsafe, then take parent latch
-    async fn find_route<K>(
+    async fn find_route(
         &'a self,
         key: KeyCondition<&K>,
         route: &mut Route<'a>,
@@ -666,7 +669,7 @@ impl<'a> Index {
     }
 
     #[cfg(test)]
-    pub(crate) async fn print<K>(&self) -> StorageResult<()>
+    pub(crate) async fn print(&self) -> StorageResult<()>
     where
         K: Decoder + std::fmt::Debug,
     {
@@ -875,15 +878,15 @@ mod tests {
     use std::ops::RangeFull;
     use std::sync::Arc;
 
-    async fn test_index() -> StorageResult<Index> {
+    async fn test_index() -> StorageResult<Index<u32>> {
         let f = tempfile::NamedTempFile::new()?;
         let disk_manager = DiskManager::new(f.path()).await?;
         let buffer_pool_manager = BufferPoolManager::new(100, 2, disk_manager).await?;
-        let index = Index::new::<u32>(Arc::new(buffer_pool_manager), 4).await?;
+        let index = Index::new(Arc::new(buffer_pool_manager), 4).await?;
         Ok(index)
     }
 
-    async fn insert_inner(index: &Index, keys: &[u32]) -> StorageResult<()> {
+    async fn insert_inner(index: &Index<u32>, keys: &[u32]) -> StorageResult<()> {
         for i in keys {
             index
                 .insert(
@@ -900,7 +903,7 @@ mod tests {
     }
 
     async fn insert_concurrency_inner(
-        index: Arc<Index>,
+        index: Arc<Index<u32>>,
         len: usize,
         concurrency: usize,
     ) -> StorageResult<()> {
@@ -971,7 +974,7 @@ mod tests {
         assert_eq!(range.len(), 900);
         let range = index.search_range(..=800).await?;
         assert_eq!(range.len(), 800);
-        let range = index.search_range::<u32, _>(RangeFull).await?;
+        let range = index.search_range::<_>(RangeFull).await?;
         assert_eq!(range.len(), 999);
         let range = index.search_range(0..900).await?;
         assert_eq!(range.len(), 899);
@@ -1024,17 +1027,17 @@ mod tests {
         insert_inner(&index, &keys.iter().copied().rev().collect::<Vec<_>>()).await?;
         for key in keys.iter().rev() {
             println!("delete: {}", key);
-            index.print::<u32>().await?;
+            index.print().await?;
             let val = index.delete(key).await?;
             assert!(val.is_some());
         }
         insert_inner(&index, &keys).await?;
-        index.print::<u32>().await?;
+        index.print().await?;
         for i in keys {
             let val = index.delete(&(i)).await?;
             println!("delete: {}", i);
             assert!(val.is_some());
-            index.print::<u32>().await?;
+            index.print().await?;
         }
 
         let val = index.search(&1).await?;
@@ -1145,7 +1148,7 @@ mod tests {
         for task in tasks {
             task.await.unwrap()?;
         }
-        index.print::<u32>().await?;
+        index.print().await?;
         for i in 0..len {
             let val = index.search(&(i as u32)).await?;
             assert!(val.is_none());
@@ -1164,8 +1167,8 @@ mod tests {
         let f = tempfile::NamedTempFile::new()?;
         let disk_manager = DiskManager::new(f.path()).await?;
         let buffer_pool_manager = Arc::new(BufferPoolManager::new(100, 2, disk_manager).await?);
-        let index1 = Index::new::<u32>(buffer_pool_manager.clone(), 128).await?;
-        let index2 = Index::new::<u32>(buffer_pool_manager.clone(), 128).await?;
+        let index1 = Index::new(buffer_pool_manager.clone(), 128).await?;
+        let index2 = Index::new(buffer_pool_manager.clone(), 128).await?;
         let keys: Vec<u32> = (1..100).collect::<Vec<_>>();
         insert_inner(&index1, &keys.iter().copied().rev().collect::<Vec<_>>()).await?;
         for i in &keys {

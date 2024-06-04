@@ -316,7 +316,7 @@ mod tests {
         .await?;
         let prediction = |id: i128| id % 2 == 0;
         let len = 4096;
-        let index = Index::new::<i128>(buffer_manager.clone(), 128).await?;
+        let index = Index::new(buffer_manager.clone(), 128).await?;
         for id in 0..len {
             let tuple = Tuple::new(vec![Value::Bigint(id), Value::String("Mike".to_string())]);
             let record_id = table.insert(tuple.clone()).await?;
