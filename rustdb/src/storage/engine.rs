@@ -1,5 +1,4 @@
 use crate::buffer::buffer_poll_manager::BufferPoolManager;
-use crate::encoding::{Decoder, Encoder};
 use crate::sql::types::Value;
 use crate::storage::index::Index;
 use crate::storage::page::column::Column;
@@ -14,13 +13,15 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 type TableKey = String;
-type TableValue = (PageId, Arc<Index>); // table page id , index
+type TableValue = (PageId, Arc<Index<Vec<Value>>>); // table page id , index
 pub struct Engine {
     tables: RwLock<BTreeMap<TableKey, TableValue>>,
     buffer_pool: Arc<BufferPoolManager>,
 }
 
 impl Storage for Engine {
+    type Key = Vec<Value>;
+
     async fn create_table<T: Into<String> + Clone>(
         &self,
         name: T,
@@ -30,8 +31,7 @@ impl Storage for Engine {
             column.validate()?;
         }
         let index =
-            Index::new::<Vec<Value>>(self.buffer_pool.clone(), Self::evaluate_tree_size(&columns))
-                .await?;
+            Index::new(self.buffer_pool.clone(), Self::evaluate_tree_size(&columns)).await?;
         let table = Table::new(name, columns, self.buffer_pool.clone()).await?;
         self.tables
             .write()
@@ -88,10 +88,7 @@ impl Storage for Engine {
         Ok(count)
     }
 
-    async fn read_tuple<K>(&self, name: &str, key: &K) -> StorageResult<Option<Tuple>>
-    where
-        K: Decoder + Encoder + Ord,
-    {
+    async fn read_tuple(&self, name: &str, key: &Self::Key) -> StorageResult<Option<Tuple>> {
         let primary = self
             .read_primary(name)
             .await
@@ -106,10 +103,7 @@ impl Storage for Engine {
         })
     }
 
-    async fn delete_tuple<K>(&self, name: &str, key: &K) -> StorageResult<Option<Tuple>>
-    where
-        K: Decoder + Encoder + Ord + Clone,
-    {
+    async fn delete_tuple(&self, name: &str, key: &Self::Key) -> StorageResult<Option<Tuple>> {
         let primary = self
             .read_primary(name)
             .await
@@ -141,14 +135,13 @@ impl Storage for Engine {
         })
     }
 
-    async fn scan<K, R>(
+    async fn scan<R>(
         &self,
         name: &str,
         range: R,
     ) -> StorageResult<impl Stream<Item = StorageResult<Tuple>>>
     where
-        K: Decoder + Encoder + Ord,
-        R: RangeBounds<K>,
+        R: RangeBounds<Self::Key>,
     {
         let primary = self
             .read_primary(name)
@@ -180,7 +173,7 @@ impl Engine {
         64
     }
 
-    pub async fn read_primary(&self, name: &str) -> Option<Arc<Index>> {
+    pub async fn read_primary(&self, name: &str) -> Option<Arc<Index<Vec<Value>>>> {
         self.tables
             .read()
             .await
