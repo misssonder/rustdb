@@ -2,10 +2,11 @@ use crate::buffer::buffer_poll_manager::{
     BufferPoolManager, OwnedPageDataReadGuard, OwnedPageDataWriteGuard, PageRef,
 };
 use crate::encoding::encoded_size::EncodedSize;
+use crate::sql::types::Value;
 use crate::storage::page::column::Column;
 use crate::storage::page::table::{TableNode, Tuple};
 use crate::storage::page::{PageEncoding, PageTrait};
-use crate::storage::{page, PageId, RecordId, StorageResult};
+use crate::storage::{page, Error, PageId, RecordId, StorageResult};
 use std::sync::Arc;
 
 pub struct Table {
@@ -106,6 +107,21 @@ impl Table {
             .collect::<Vec<_>>())
     }
 
+    pub async fn primary_keys(&self, tuple: &Tuple) -> StorageResult<Vec<Value>> {
+        self.primary_positions()
+            .await?
+            .iter()
+            .map(|position| {
+                let value = tuple.field(*position);
+                if let Value::Null = value {
+                    Err(Error::Value("Primary value must not be null".to_string()))
+                } else {
+                    Ok(value)
+                }
+            })
+            .collect()
+    }
+
     pub async fn insert(&self, tuple: Tuple) -> StorageResult<RecordId> {
         let (mut page, mut node) = if !self.has_remaining(&tuple).await? {
             self.add_node().await?
@@ -117,11 +133,60 @@ impl Table {
         Ok(record_id)
     }
 
+    pub async fn delete(&self, record_id: RecordId) -> StorageResult<Tuple> {
+        let RecordId { page_id, slot_num } = record_id;
+        let mut page = self.buffer_pool.fetch_page_write_owned(page_id).await?;
+        let mut node = page.table_node()?;
+        let tuple = match node
+            .tuples
+            .get_mut(slot_num as usize)
+            .filter(|tuple| !tuple.deleted)
+        {
+            None => {
+                return Err(Error::NotFound(
+                    "tuple",
+                    format!("page: {} slot: {}", page_id, slot_num),
+                ))
+            }
+            Some(tuple) => {
+                tuple.deleted = true;
+                tuple.clone()
+            }
+        };
+        page.write_table_node_back(&node)?;
+        Ok(tuple)
+    }
+
     pub async fn read_tuple(&self, record_id: RecordId) -> StorageResult<Option<Tuple>> {
         let RecordId { page_id, slot_num } = record_id;
         let page = self.buffer_pool.fetch_page_read_owned(page_id).await?;
         let node = page.table_node()?;
-        Ok(node.tuples.get(slot_num as usize).cloned())
+        Ok(node
+            .tuples
+            .get(slot_num as usize)
+            .filter(|tuple| !tuple.deleted)
+            .cloned())
+    }
+
+    pub async fn update_tuple(
+        &self,
+        record_id: RecordId,
+        tuple: Tuple,
+    ) -> StorageResult<Option<()>> {
+        let RecordId { page_id, slot_num } = record_id;
+        let mut page = self.buffer_pool.fetch_page_write_owned(page_id).await?;
+        let mut node = page.table_node()?;
+        let t = match node
+            .tuples
+            .get_mut(slot_num as usize)
+            .filter(|tuple| !tuple.deleted)
+        {
+            None => return Ok(None),
+            Some(tuple) => tuple,
+        };
+        t.values = tuple.values;
+        page.write_table_node_back(&node)?;
+        Ok(Some(()))
     }
 
     pub async fn tuples(&self) -> StorageResult<impl DoubleEndedIterator<Item = Tuple>> {
@@ -132,7 +197,7 @@ impl Table {
             let page = self.buffer_pool.fetch_page_read_owned(page_id).await?;
             let node = page.table_node()?;
             let next = node.next();
-            output.extend(node.tuples);
+            output.extend(node.tuples.into_iter().filter(|tuple| !tuple.deleted));
             latches.push(page);
             match next {
                 None => break,
@@ -238,7 +303,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn insert_tuple() -> StorageResult<()> {
+    async fn delete_tuple() -> StorageResult<()> {
         let buffer_manager = Arc::new(new_buffer_pool().await?);
         let column_id = Column::new("id", DataType::Bigint).with_primary(true);
         let column_name =
@@ -249,20 +314,25 @@ mod tests {
             buffer_manager.clone(),
         )
         .await?;
-        let len = 40960;
+        let prediction = |id: i128| id % 2 == 0;
+        let len = 4096;
         let index = Index::new::<i128>(buffer_manager.clone(), 128).await?;
         for id in 0..len {
             let tuple = Tuple::new(vec![Value::Bigint(id), Value::String("Mike".to_string())]);
             let record_id = table.insert(tuple.clone()).await?;
             assert_eq!(table.read_tuple(record_id).await?, Some(tuple));
             index.insert(id, record_id).await?;
-            println!("insert: {}", id);
+            if prediction(id) {
+                table.delete(record_id).await?;
+            }
         }
         assert_eq!(
-            table.tuples().await?.collect::<Vec<_>>(),
+            table.tuples().await?.collect::<Vec<_>>().len(),
             (0..len)
+                .filter(|id| prediction(*id))
                 .map(|id| Tuple::new(vec![Value::Bigint(id), Value::String("Mike".to_string())]))
                 .collect::<Vec<_>>()
+                .len()
         );
         Ok(())
     }

@@ -189,7 +189,7 @@ impl<'a> Index {
 
     pub async fn delete<K>(&self, key: &K) -> StorageResult<Option<(K, RecordId)>>
     where
-        K: Decoder + Encoder + Ord + Clone + Default,
+        K: Decoder + Encoder + Ord + Clone,
     {
         let option = RouteOption::default().with_action(RouteAction::Delete);
         let mut route = Route::new(option);
@@ -307,7 +307,7 @@ impl<'a> Index {
         key: &K,
     ) -> StorageResult<Option<(K, RecordId)>>
     where
-        K: Decoder + Encoder + Ord + Default + Clone,
+        K: Decoder + Encoder + Ord + Clone,
     {
         let mut res = None;
         loop {
@@ -361,14 +361,14 @@ impl<'a> Index {
         Ok(res)
     }
 
-    pub async fn steal<K>(
+    async fn steal<K>(
         &self,
         parent_latch: &mut OwnedPageDataWriteGuard,
         latch: &mut OwnedPageDataWriteGuard,
         index: usize,
     ) -> StorageResult<Option<()>>
     where
-        K: Decoder + Encoder + Ord + Default + Clone,
+        K: Decoder + Encoder + Ord + Clone,
     {
         let mut parent: Internal<K> = parent_latch.node()?.assume_internal();
         let node: Node<K> = latch.node()?;
@@ -480,7 +480,7 @@ impl<'a> Index {
 
     /// merge this node and it's prev node or next node
     /// return true if the node which been merged become the root
-    pub async fn merge<K>(
+    async fn merge<K>(
         &self,
         parent_latch: &mut OwnedPageDataWriteGuard,
         latch: OwnedPageDataWriteGuard,
@@ -963,6 +963,10 @@ mod tests {
         let index = test_index().await?;
         let keys = (1..1000).collect::<Vec<_>>();
         insert_inner(&index, &keys.iter().rev().copied().collect::<Vec<_>>()).await?;
+        let range = index
+            .search_range((Bound::Unbounded, Bound::Included(1000)))
+            .await?;
+        assert_eq!(range.len(), 999);
         let range = index.search_range(100..).await?;
         assert_eq!(range.len(), 900);
         let range = index.search_range(..=800).await?;

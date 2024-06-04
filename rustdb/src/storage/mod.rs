@@ -3,7 +3,9 @@ use crate::storage::page::column::Column;
 use crate::storage::page::table::{Tuple, Tuples};
 use crate::storage::table::Table;
 use crate::{buffer, encoding};
+use futures::Stream;
 use std::future::Future;
+use std::ops::RangeBounds;
 use std::sync::atomic::AtomicUsize;
 use thiserror::Error;
 
@@ -70,4 +72,27 @@ pub trait Storage {
     ) -> impl Future<Output = StorageResult<Option<Tuple>>>
     where
         K: Decoder + Encoder + Ord;
+
+    fn delete_tuple<K>(
+        &self,
+        name: &str,
+        key: &K,
+    ) -> impl Future<Output = StorageResult<Option<Tuple>>>
+    where
+        K: Decoder + Encoder + Ord + Clone;
+
+    fn update_tuple(
+        &self,
+        name: &str,
+        tuple: Tuple,
+    ) -> impl Future<Output = StorageResult<Option<()>>>;
+
+    fn scan<K, R>(
+        &self,
+        name: &str,
+        range: R,
+    ) -> impl Future<Output = StorageResult<impl Stream<Item = StorageResult<Tuple>>>>
+    where
+        K: Decoder + Encoder + Ord,
+        R: RangeBounds<K>;
 }

@@ -6,7 +6,10 @@ use crate::storage::page::column::Column;
 use crate::storage::page::table::{Tuple, Tuples};
 use crate::storage::table::Table;
 use crate::storage::{Error, PageId, Storage, StorageResult};
+use async_stream::try_stream;
+use futures::{Stream, StreamExt};
 use std::collections::BTreeMap;
+use std::ops::RangeBounds;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -102,6 +105,68 @@ impl Storage for Engine {
             Some(record_id) => table.read_tuple(record_id).await?,
         })
     }
+
+    async fn delete_tuple<K>(&self, name: &str, key: &K) -> StorageResult<Option<Tuple>>
+    where
+        K: Decoder + Encoder + Ord + Clone,
+    {
+        let primary = self
+            .read_primary(name)
+            .await
+            .ok_or(Error::NotFound("table", name.to_string()))?;
+        let table = self
+            .read_table(name)
+            .await?
+            .ok_or(Error::NotFound("table", name.to_string()))?;
+        Ok(match primary.delete(key).await? {
+            None => None,
+            Some((_, record_id)) => Some(table.delete(record_id).await?),
+        })
+    }
+
+    async fn update_tuple(&self, name: &str, tuple: Tuple) -> StorageResult<Option<()>> {
+        let primary = self
+            .read_primary(name)
+            .await
+            .ok_or(Error::NotFound("table", name.to_string()))?;
+        let table = self
+            .read_table(name)
+            .await?
+            .ok_or(Error::NotFound("table", name.to_string()))?;
+        let key = table.primary_keys(&tuple).await?;
+        assert!(!key.is_empty());
+        Ok(match primary.search(&key).await? {
+            None => None,
+            Some(record_id) => table.update_tuple(record_id, tuple).await?,
+        })
+    }
+
+    async fn scan<K, R>(
+        &self,
+        name: &str,
+        range: R,
+    ) -> StorageResult<impl Stream<Item = StorageResult<Tuple>>>
+    where
+        K: Decoder + Encoder + Ord,
+        R: RangeBounds<K>,
+    {
+        let primary = self
+            .read_primary(name)
+            .await
+            .ok_or(Error::NotFound("table", name.to_string()))?;
+        let table = self
+            .read_table(name)
+            .await?
+            .ok_or(Error::NotFound("table", name.to_string()))?;
+        let record_ids = primary.search_range(range).await?;
+        let stream = try_stream! {
+            for record_id in record_ids{
+                yield table.read_tuple(record_id).await?
+                .ok_or(Error::NotFound("tuple",format!("page: {} slot: {}",record_id.page_id,record_id.slot_num)))?;
+            }
+        };
+        Ok(stream)
+    }
 }
 
 impl Engine {
@@ -126,6 +191,7 @@ impl Engine {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use crate::sql::types::DataType;
     use crate::storage::disk::disk_manager::DiskManager;
@@ -152,6 +218,7 @@ mod tests {
         engine.insert_tuples("user", tuples.clone()).await?;
         let table = engine.read_table("user").await?.unwrap();
         let tuples = table.tuples().await?.collect::<Vec<_>>();
+        assert_eq!(tuples.len(), len as usize);
         for id in 0..len {
             assert_eq!(
                 engine.read_tuple("user", &vec![Value::Bigint(id)]).await?,
@@ -161,6 +228,34 @@ mod tests {
                 ]))
             );
         }
+        let scan = engine
+            .scan(
+                "user",
+                (
+                    std::ops::Bound::Unbounded,
+                    std::ops::Bound::Included(vec![Value::Bigint(len + 1)]),
+                ),
+            )
+            .await?
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<StorageResult<Vec<_>>>()?;
+        assert_eq!(scan.len(), len as usize);
+        for id in 0..len {
+            assert_eq!(
+                engine
+                    .delete_tuple("user", &vec![Value::Bigint(id)])
+                    .await?
+                    .map(|tuple| tuple.values),
+                Some(Tuple::new(vec![Value::Bigint(id), Value::String("Mike".to_string())]).values)
+            );
+            assert!(engine
+                .delete_tuple("user", &vec![Value::Bigint(id)])
+                .await?
+                .is_none())
+        }
+
         Ok(())
     }
 }
