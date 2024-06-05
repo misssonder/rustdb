@@ -60,35 +60,28 @@ pub trait Storage {
 
     fn drop_table(&self, name: &str) -> impl Future<Output = StorageResult<Option<Table>>>;
 
-    fn insert_tuples(
-        &self,
-        name: &str,
-        tuples: Tuples,
-    ) -> impl Future<Output = StorageResult<usize>>;
+    fn insert(&self, name: &str, tuples: Tuples) -> impl Future<Output = StorageResult<usize>>;
 
-    fn read_tuple(
+    fn read(
         &self,
         name: &str,
         key: &Self::Key,
     ) -> impl Future<Output = StorageResult<Option<Tuple>>>;
 
-    fn delete_tuple(
+    fn delete(
         &self,
         name: &str,
         key: &Self::Key,
     ) -> impl Future<Output = StorageResult<Option<Tuple>>>;
 
-    fn update_tuple(
-        &self,
-        name: &str,
-        tuple: Tuple,
-    ) -> impl Future<Output = StorageResult<Option<()>>>;
+    fn update(&self, name: &str, tuple: Tuple) -> impl Future<Output = StorageResult<Option<()>>>;
 
-    fn scan<R>(
+    fn scan<'a, R>(
         &self,
         name: &str,
         range: R,
     ) -> impl Future<Output = StorageResult<impl Stream<Item = StorageResult<Tuple>>>>
     where
-        R: RangeBounds<Self::Key>;
+        R: RangeBounds<&'a Self::Key>,
+        Self::Key: 'a;
 }
