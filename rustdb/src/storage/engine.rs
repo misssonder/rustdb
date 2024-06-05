@@ -57,7 +57,7 @@ impl Storage for Engine {
         })
     }
 
-    async fn insert_tuples(&self, name: &str, tuples: Tuples) -> StorageResult<usize> {
+    async fn insert(&self, name: &str, tuples: Tuples) -> StorageResult<usize> {
         let primary = self
             .read_primary(name)
             .await
@@ -88,7 +88,7 @@ impl Storage for Engine {
         Ok(count)
     }
 
-    async fn read_tuple(&self, name: &str, key: &Self::Key) -> StorageResult<Option<Tuple>> {
+    async fn read(&self, name: &str, key: &Self::Key) -> StorageResult<Option<Tuple>> {
         let primary = self
             .read_primary(name)
             .await
@@ -103,7 +103,7 @@ impl Storage for Engine {
         })
     }
 
-    async fn delete_tuple(&self, name: &str, key: &Self::Key) -> StorageResult<Option<Tuple>> {
+    async fn delete(&self, name: &str, key: &Self::Key) -> StorageResult<Option<Tuple>> {
         let primary = self
             .read_primary(name)
             .await
@@ -118,7 +118,7 @@ impl Storage for Engine {
         })
     }
 
-    async fn update_tuple(&self, name: &str, tuple: Tuple) -> StorageResult<Option<()>> {
+    async fn update(&self, name: &str, tuple: Tuple) -> StorageResult<Option<()>> {
         let primary = self
             .read_primary(name)
             .await
@@ -135,13 +135,14 @@ impl Storage for Engine {
         })
     }
 
-    async fn scan<R>(
+    async fn scan<'a, R>(
         &self,
         name: &str,
         range: R,
     ) -> StorageResult<impl Stream<Item = StorageResult<Tuple>>>
     where
-        R: RangeBounds<Self::Key>,
+        R: RangeBounds<&'a Self::Key>,
+        Self::Key: 'a,
     {
         let primary = self
             .read_primary(name)
@@ -208,13 +209,13 @@ mod tests {
         engine
             .create_table("user", vec![column_id.clone(), column_name.clone()])
             .await?;
-        engine.insert_tuples("user", tuples.clone()).await?;
+        engine.insert("user", tuples.clone()).await?;
         let table = engine.read_table("user").await?.unwrap();
         let tuples = table.tuples().await?.collect::<Vec<_>>();
         assert_eq!(tuples.len(), len as usize);
         for id in 0..len {
             assert_eq!(
-                engine.read_tuple("user", &vec![Value::Bigint(id)]).await?,
+                engine.read("user", &vec![Value::Bigint(id)]).await?,
                 Some(Tuple::new(vec![
                     Value::Bigint(id),
                     Value::String("Mike".to_string())
@@ -226,7 +227,7 @@ mod tests {
                 "user",
                 (
                     std::ops::Bound::Unbounded,
-                    std::ops::Bound::Included(vec![Value::Bigint(len + 1)]),
+                    std::ops::Bound::Included(&vec![Value::Bigint(len + 1)]),
                 ),
             )
             .await?
@@ -238,13 +239,13 @@ mod tests {
         for id in 0..len {
             assert_eq!(
                 engine
-                    .delete_tuple("user", &vec![Value::Bigint(id)])
+                    .delete("user", &vec![Value::Bigint(id)])
                     .await?
                     .map(|tuple| tuple.values),
                 Some(Tuple::new(vec![Value::Bigint(id), Value::String("Mike".to_string())]).values)
             );
             assert!(engine
-                .delete_tuple("user", &vec![Value::Bigint(id)])
+                .delete("user", &vec![Value::Bigint(id)])
                 .await?
                 .is_none())
         }

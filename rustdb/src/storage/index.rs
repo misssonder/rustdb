@@ -63,10 +63,10 @@ impl<'a, K> Index<K> {
         }
     }
 
-    pub async fn search_range<R>(&self, range: R) -> StorageResult<Vec<RecordId>>
+    pub async fn search_range<'r, R>(&self, range: R) -> StorageResult<Vec<RecordId>>
     where
-        K: Decoder + Encoder + Ord,
-        R: RangeBounds<K>,
+        K: Decoder + Encoder + Ord + 'r,
+        R: RangeBounds<&'r K>,
     {
         let output = 'output: loop {
             let mut result = Vec::new();
@@ -108,7 +108,7 @@ impl<'a, K> Index<K> {
                 match (start, end) {
                     (Ok(start_index), Ok(end_index)) => {
                         for (k, v) in leaf.kv[start_index..=end_index].iter() {
-                            if !excluded.contains(&k) {
+                            if !excluded.contains(&&k) {
                                 result.push(*v);
                             }
                         }
@@ -119,14 +119,14 @@ impl<'a, K> Index<K> {
                     (Ok(start_index), Err(end_index)) => {
                         if end_index < leaf.kv.len() {
                             for (k, v) in leaf.kv[start_index..=end_index].iter() {
-                                if !excluded.contains(&k) {
+                                if !excluded.contains(&&k) {
                                     result.push(*v);
                                 }
                             }
                             break 'output Ok(result);
                         } else {
                             for (k, v) in leaf.kv[start_index..].iter() {
-                                if !excluded.contains(&k) {
+                                if !excluded.contains(&&k) {
                                     result.push(*v);
                                 }
                             }
@@ -134,7 +134,7 @@ impl<'a, K> Index<K> {
                     }
                     (Err(start_index), Ok(end_index)) => {
                         for (k, v) in leaf.kv[start_index..=end_index].iter() {
-                            if !excluded.contains(&k) {
+                            if !excluded.contains(&&k) {
                                 result.push(*v);
                             }
                         }
@@ -145,14 +145,14 @@ impl<'a, K> Index<K> {
                     (Err(start_index), Err(end_index)) => {
                         if end_index < leaf.kv.len() {
                             for (k, v) in leaf.kv[start_index..=end_index].iter() {
-                                if !excluded.contains(&k) {
+                                if !excluded.contains(&&k) {
                                     result.push(*v);
                                 }
                             }
                             break 'output Ok(result);
                         } else if start_index < leaf.kv.len() {
                             for (k, v) in leaf.kv[start_index..].iter() {
-                                if !excluded.contains(&k) {
+                                if !excluded.contains(&&k) {
                                     result.push(*v);
                                 }
                             }
@@ -967,39 +967,39 @@ mod tests {
         let keys = (1..1000).collect::<Vec<_>>();
         insert_inner(&index, &keys.iter().rev().copied().collect::<Vec<_>>()).await?;
         let range = index
-            .search_range((Bound::Unbounded, Bound::Included(1000)))
+            .search_range((Bound::Unbounded, Bound::Included(&1000)))
             .await?;
         assert_eq!(range.len(), 999);
-        let range = index.search_range(100..).await?;
+        let range = index.search_range(&100..).await?;
         assert_eq!(range.len(), 900);
-        let range = index.search_range(..=800).await?;
+        let range = index.search_range(..=&800).await?;
         assert_eq!(range.len(), 800);
         let range = index.search_range::<_>(RangeFull).await?;
         assert_eq!(range.len(), 999);
-        let range = index.search_range(0..900).await?;
+        let range = index.search_range(&0..&900).await?;
         assert_eq!(range.len(), 899);
         let range = index
-            .search_range((Bound::Excluded(100), Bound::Included(1000)))
+            .search_range((Bound::Excluded(&100), Bound::Included(&1000)))
             .await?;
         assert_eq!(range.len(), 899);
-        let range = index.search_range(1..=1000).await?;
+        let range = index.search_range(&1..=&1000).await?;
         assert_eq!(range.len(), 999);
         for (index, record) in range.into_iter().enumerate() {
             assert_eq!(index + 1, record.page_id);
         }
 
-        let range = index.search_range(801..=900).await?;
+        let range = index.search_range(&801..=&900).await?;
         for (index, record) in range.into_iter().enumerate() {
             assert_eq!(index + 801, record.page_id);
         }
 
-        let range = index.search_range(800..=1200).await?;
+        let range = index.search_range(&800..=&1200).await?;
         assert_eq!(range.len(), 200);
         for (index, record) in range.into_iter().enumerate() {
             assert_eq!(index + 800, record.page_id);
         }
 
-        let range = index.search_range(0..=1200).await?;
+        let range = index.search_range(&0..=&1200).await?;
         assert_eq!(range.len(), 999);
         for (index, record) in range.into_iter().enumerate() {
             assert_eq!(index + 1, record.page_id);
@@ -1087,7 +1087,7 @@ mod tests {
             let index_clone = index.clone();
             let task = tokio::spawn(async move {
                 for i in start..end {
-                    let val = index_clone.search_range(0..=len as u32).await?;
+                    let val = index_clone.search_range(&0..=&(len as u32)).await?;
                     assert!(!val.is_empty());
                 }
                 Ok::<_, Error>(())
