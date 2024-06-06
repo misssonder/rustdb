@@ -9,6 +9,7 @@ use crate::storage::page::{PageEncoding, PageTrait};
 use crate::storage::{page, Error, PageId, RecordId, StorageResult};
 use std::sync::Arc;
 
+/// The wrapper of physical table in [`page::table::Table`]
 pub struct Table {
     name: String,
     buffer_pool: Arc<BufferPoolManager>,

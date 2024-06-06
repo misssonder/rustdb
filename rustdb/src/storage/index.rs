@@ -13,6 +13,7 @@ use std::ops::{Deref, RangeBounds};
 use std::sync::Arc;
 use tokio::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
+/// A concurrency BPlus Tree, use [`Latch`] to lock every node.
 pub struct Index<K> {
     buffer_pool: Arc<BufferPoolManager>,
     root: RwLock<PageId>,
@@ -364,6 +365,9 @@ impl<'a, K> Index<K> {
         Ok(res)
     }
 
+    /// Try to steal key-value from it's sibling node.
+    /// If steal successfully, return [`Some`]
+    /// else, return [`None`]
     async fn steal(
         &self,
         parent_latch: &mut OwnedPageDataWriteGuard,
@@ -586,9 +590,9 @@ impl<'a, K> Index<K> {
         }
     }
 
-    /// take latches according to latch crabbin
-    /// if current node is safe, then release parent latch
-    /// if current node is unsafe, then take parent latch
+    /// Take latches according to latch crabbin
+    /// If current node is safe, then release parent latch
+    /// If current node is unsafe, then take parent latch
     async fn find_route(
         &'a self,
         key: KeyCondition<&K>,
