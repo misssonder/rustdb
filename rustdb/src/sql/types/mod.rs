@@ -1,5 +1,6 @@
 pub(crate) mod expression;
 
+use crate::sql::catalog::Column;
 use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
@@ -98,3 +99,7 @@ impl Value {
         )
     }
 }
+
+pub type Row = Vec<Value>;
+
+pub type Columns = Vec<Column>;
