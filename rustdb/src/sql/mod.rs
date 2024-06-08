@@ -2,6 +2,7 @@ use thiserror::Error;
 
 mod catalog;
 mod engine;
+mod execution;
 mod transaction;
 pub mod types;
 
