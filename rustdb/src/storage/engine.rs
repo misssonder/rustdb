@@ -191,8 +191,7 @@ mod tests {
     use crate::storage::disk::disk_manager::DiskManager;
     use crate::storage::page::table::Tuple;
 
-    #[tokio::test]
-    async fn engine() -> StorageResult<()> {
+    async fn new_engine() -> StorageResult<Engine> {
         let f = tempfile::NamedTempFile::new()?;
         let disk_manager = DiskManager::new(f.path()).await?;
         let buffer_pool = BufferPoolManager::new(100, 2, disk_manager).await?;
@@ -202,13 +201,18 @@ mod tests {
             .with_unique(true);
         let column_name =
             Column::new("name", DataType::String).with_default(Value::String("hello".to_string()));
+        engine
+            .create_table("user", vec![column_id.clone(), column_name.clone()])
+            .await?;
+        Ok(engine)
+    }
+    #[tokio::test]
+    async fn engine() -> StorageResult<()> {
+        let engine = new_engine().await?;
         let len = 10240;
         let tuples = (0..len)
             .map(|id| Tuple::new(vec![Value::Bigint(id), Value::String("Mike".to_string())]))
             .collect::<Vec<_>>();
-        engine
-            .create_table("user", vec![column_id.clone(), column_name.clone()])
-            .await?;
         engine.insert("user", tuples.clone()).await?;
         let table = engine.read_table("user").await?.unwrap();
         let tuples = table.tuples().await?.collect::<Vec<_>>();
@@ -250,6 +254,59 @@ mod tests {
                 .is_none())
         }
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn concurrency() -> StorageResult<()> {
+        let engine = Arc::new(new_engine().await?);
+        let concurrency = 2;
+        let limit = 1000;
+        let mut tasks = Vec::new();
+        let len = 10240;
+        for i in 0..concurrency {
+            let start = i * 1000;
+            let end = (i + 1) * 1000;
+            let engine_clone = engine.clone();
+            let task = tokio::spawn(async move {
+                let tuples = (start..end)
+                    .map(|id| {
+                        Tuple::new(vec![Value::Bigint(id), Value::String("Mike".to_string())])
+                    })
+                    .collect::<Vec<_>>();
+                engine_clone.insert("user", tuples.clone()).await?;
+                Ok::<_, Error>(())
+            });
+            tasks.push(task);
+            let engine_clone = engine.clone();
+            let task = tokio::spawn(async move {
+                for id in start..end {
+                    engine_clone.read("user", &vec![Value::Bigint(id)]).await?;
+                }
+                Ok::<_, Error>(())
+            });
+            tasks.push(task);
+        }
+        for task in tasks {
+            task.await.unwrap()?;
+        }
+        let mut tasks = Vec::new();
+        for i in 0..concurrency {
+            let start = i * 1000;
+            let end = (i + 1) * 1000;
+            let engine_clone = engine.clone();
+            let task = tokio::spawn(async move {
+                for id in start..end {
+                    let res = engine_clone.read("user", &vec![Value::Bigint(id)]).await?;
+                    assert!(res.is_some());
+                }
+                Ok::<_, Error>(())
+            });
+            tasks.push(task);
+        }
+        for task in tasks {
+            task.await.unwrap()?;
+        }
         Ok(())
     }
 }
