@@ -878,9 +878,8 @@ impl<'a> RootLatch<'a> {
 mod tests {
     use super::*;
     use crate::storage::disk::disk_manager::DiskManager;
-    use crate::storage::{Error, StorageResult};
+    use crate::storage::Error;
     use std::ops::RangeFull;
-    use std::sync::Arc;
 
     async fn test_index() -> StorageResult<Index<u32>> {
         let f = tempfile::NamedTempFile::new()?;
@@ -1090,7 +1089,7 @@ mod tests {
             let end = start + limit;
             let index_clone = index.clone();
             let task = tokio::spawn(async move {
-                for i in start..end {
+                for _ in start..end {
                     let val = index_clone.search_range(&0..=&(len as u32)).await?;
                     assert!(!val.is_empty());
                 }

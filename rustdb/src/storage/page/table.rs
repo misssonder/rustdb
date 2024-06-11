@@ -1,7 +1,7 @@
 use crate::sql::types::Value;
 use crate::storage::page::column::Column;
 use crate::storage::page::PageTrait;
-use crate::storage::{PageId, RecordId};
+use crate::storage::{PageId, RecordId, TimeStamp};
 
 /// Table is List, it contains a bunch of pages which can be decoded into TableNode
 #[derive(Debug, PartialEq)]
@@ -113,21 +113,24 @@ impl TableNode {
 }
 #[derive(Debug, PartialEq, Clone)]
 pub struct Tuple {
-    pub(crate) values: Vec<Value>,
+    /// The MVCC timestamp
+    pub(crate) timestamp: TimeStamp,
     pub(crate) deleted: bool,
+    pub(crate) values: Vec<Value>,
 }
 
 pub type Tuples = Vec<Tuple>;
 
 impl Tuple {
-    pub fn new(values: Vec<Value>) -> Self {
+    pub fn new(values: Vec<Value>, timestamp: TimeStamp) -> Self {
         Self {
-            values,
+            timestamp,
             deleted: false,
+            values,
         }
     }
 
-    pub fn field(&self, position: usize) -> Value {
-        self.values.get(position).cloned().unwrap_or(Value::Null)
+    pub fn field(&self, position: usize) -> Option<Value> {
+        self.values.get(position).cloned()
     }
 }

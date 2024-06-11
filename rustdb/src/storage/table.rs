@@ -90,37 +90,27 @@ impl Table {
         Ok((page, table))
     }
 
-    pub async fn primary_positions(&self) -> StorageResult<Vec<usize>> {
-        Ok(self
-            .table_read()
+    pub async fn primary_position(&self) -> StorageResult<usize> {
+        self.table_read()
             .await?
             .1
             .columns()
             .iter()
             .enumerate()
-            .filter_map(|(position, column)| {
+            .find_map(|(position, column)| {
                 if column.primary() {
                     Some(position)
                 } else {
                     None
                 }
             })
-            .collect::<Vec<_>>())
+            .ok_or(Error::NotFound("column", String::from("primary key")))
     }
 
-    pub async fn primary_keys(&self, tuple: &Tuple) -> StorageResult<Vec<Value>> {
-        self.primary_positions()
-            .await?
-            .iter()
-            .map(|position| {
-                let value = tuple.field(*position);
-                if let Value::Null = value {
-                    Err(Error::Value("Primary value must not be null".to_string()))
-                } else {
-                    Ok(value)
-                }
-            })
-            .collect()
+    pub async fn primary_key(&self, tuple: &Tuple) -> StorageResult<Value> {
+        tuple
+            .field(self.primary_position().await?)
+            .ok_or(Error::NotFound("column", String::from("primary key")))
     }
 
     pub async fn insert(&self, tuple: Tuple) -> StorageResult<RecordId> {
@@ -266,7 +256,7 @@ impl Table {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sql::types::{DataType, Value};
+    use crate::sql::types::DataType;
     use crate::storage::disk::disk_manager::DiskManager;
     use crate::storage::index::Index;
 
@@ -319,7 +309,10 @@ mod tests {
         let len = 4096;
         let index = Index::new(buffer_manager.clone(), 128).await?;
         for id in 0..len {
-            let tuple = Tuple::new(vec![Value::Bigint(id), Value::String("Mike".to_string())]);
+            let tuple = Tuple::new(
+                vec![Value::Bigint(id), Value::String("Mike".to_string())],
+                0,
+            );
             let record_id = table.insert(tuple.clone()).await?;
             assert_eq!(table.read_tuple(record_id).await?, Some(tuple));
             index.insert(id, record_id).await?;
@@ -331,7 +324,10 @@ mod tests {
             table.tuples().await?.collect::<Vec<_>>().len(),
             (0..len)
                 .filter(|id| prediction(*id))
-                .map(|id| Tuple::new(vec![Value::Bigint(id), Value::String("Mike".to_string())]))
+                .map(|id| Tuple::new(
+                    vec![Value::Bigint(id), Value::String("Mike".to_string())],
+                    0
+                ))
                 .collect::<Vec<_>>()
                 .len()
         );

@@ -13,15 +13,13 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 type TableKey = String;
-type TableValue = (PageId, Arc<Index<Vec<Value>>>); // table page id , index
+type TableValue = (PageId, Arc<Index<Value>>); // table page id , index
 pub struct Engine {
     tables: RwLock<BTreeMap<TableKey, TableValue>>,
     buffer_pool: Arc<BufferPoolManager>,
 }
 
 impl Storage for Engine {
-    type Key = Vec<Value>;
-
     async fn create_table<T: Into<String> + Clone>(
         &self,
         name: T,
@@ -66,21 +64,12 @@ impl Storage for Engine {
             .read_table(name)
             .await?
             .ok_or(Error::NotFound("table", name.to_string()))?;
-        let primary_positions = table.primary_positions().await?;
-        assert!(!primary_positions.is_empty());
+        let primary_position = table.primary_position().await?;
         let mut count = 0;
         for tuple in tuples {
-            let key = primary_positions
-                .iter()
-                .map(|position| {
-                    let value = tuple.field(*position);
-                    if let Value::Null = value {
-                        Err(Error::Value("Primary value must not be null".to_string()))
-                    } else {
-                        Ok(value)
-                    }
-                })
-                .collect::<StorageResult<Vec<_>>>()?;
+            let key = tuple
+                .field(primary_position)
+                .ok_or(Error::NotFound("column", String::from("primary key")))?;
             let record_id = table.insert(tuple).await?;
             primary.insert(key, record_id).await?;
             count += 1
@@ -88,7 +77,7 @@ impl Storage for Engine {
         Ok(count)
     }
 
-    async fn read(&self, name: &str, key: &Self::Key) -> StorageResult<Option<Tuple>> {
+    async fn read(&self, name: &str, key: &Value) -> StorageResult<Option<Tuple>> {
         let primary = self
             .read_primary(name)
             .await
@@ -103,7 +92,7 @@ impl Storage for Engine {
         })
     }
 
-    async fn delete(&self, name: &str, key: &Self::Key) -> StorageResult<Option<Tuple>> {
+    async fn delete(&self, name: &str, key: &Value) -> StorageResult<Option<Tuple>> {
         let primary = self
             .read_primary(name)
             .await
@@ -127,8 +116,7 @@ impl Storage for Engine {
             .read_table(name)
             .await?
             .ok_or(Error::NotFound("table", name.to_string()))?;
-        let key = table.primary_keys(&tuple).await?;
-        assert!(!key.is_empty());
+        let key = table.primary_key(&tuple).await?;
         Ok(match primary.search(&key).await? {
             None => None,
             Some(record_id) => table.update_tuple(record_id, tuple).await?,
@@ -141,8 +129,8 @@ impl Storage for Engine {
         range: R,
     ) -> StorageResult<impl Stream<Item = StorageResult<Tuple>>>
     where
-        R: RangeBounds<&'a Self::Key>,
-        Self::Key: 'a,
+        R: RangeBounds<&'a Value>,
+        Value: 'a,
     {
         let primary = self
             .read_primary(name)
@@ -174,7 +162,7 @@ impl Engine {
         64
     }
 
-    pub async fn read_primary(&self, name: &str) -> Option<Arc<Index<Vec<Value>>>> {
+    pub async fn read_primary(&self, name: &str) -> Option<Arc<Index<Value>>> {
         self.tables
             .read()
             .await
@@ -189,12 +177,11 @@ mod tests {
     use super::*;
     use crate::sql::types::DataType;
     use crate::storage::disk::disk_manager::DiskManager;
-    use crate::storage::page::table::Tuple;
 
     async fn new_engine() -> StorageResult<Engine> {
         let f = tempfile::NamedTempFile::new()?;
         let disk_manager = DiskManager::new(f.path()).await?;
-        let buffer_pool = BufferPoolManager::new(100, 2, disk_manager).await?;
+        let buffer_pool = BufferPoolManager::new(128, 2, disk_manager).await?;
         let engine = Engine::new(Arc::new(buffer_pool));
         let column_id = Column::new("id", DataType::Bigint)
             .with_primary(true)
@@ -211,7 +198,12 @@ mod tests {
         let engine = new_engine().await?;
         let len = 10240;
         let tuples = (0..len)
-            .map(|id| Tuple::new(vec![Value::Bigint(id), Value::String("Mike".to_string())]))
+            .map(|id| {
+                Tuple::new(
+                    vec![Value::Bigint(id), Value::String("Mike".to_string())],
+                    0,
+                )
+            })
             .collect::<Vec<_>>();
         engine.insert("user", tuples.clone()).await?;
         let table = engine.read_table("user").await?.unwrap();
@@ -219,11 +211,11 @@ mod tests {
         assert_eq!(tuples.len(), len as usize);
         for id in 0..len {
             assert_eq!(
-                engine.read("user", &vec![Value::Bigint(id)]).await?,
-                Some(Tuple::new(vec![
-                    Value::Bigint(id),
-                    Value::String("Mike".to_string())
-                ]))
+                engine.read("user", &Value::Bigint(id)).await?,
+                Some(Tuple::new(
+                    vec![Value::Bigint(id), Value::String("Mike".to_string())],
+                    0
+                ))
             );
         }
         let scan = engine
@@ -231,7 +223,7 @@ mod tests {
                 "user",
                 (
                     std::ops::Bound::Unbounded,
-                    std::ops::Bound::Included(&vec![Value::Bigint(len + 1)]),
+                    std::ops::Bound::Included(&Value::Bigint(len + 1)),
                 ),
             )
             .await?
@@ -243,15 +235,18 @@ mod tests {
         for id in 0..len {
             assert_eq!(
                 engine
-                    .delete("user", &vec![Value::Bigint(id)])
+                    .delete("user", &Value::Bigint(id))
                     .await?
                     .map(|tuple| tuple.values),
-                Some(Tuple::new(vec![Value::Bigint(id), Value::String("Mike".to_string())]).values)
+                Some(
+                    Tuple::new(
+                        vec![Value::Bigint(id), Value::String("Mike".to_string())],
+                        0
+                    )
+                    .values
+                )
             );
-            assert!(engine
-                .delete("user", &vec![Value::Bigint(id)])
-                .await?
-                .is_none())
+            assert!(engine.delete("user", &Value::Bigint(id)).await?.is_none())
         }
 
         Ok(())
@@ -263,15 +258,17 @@ mod tests {
         let concurrency = 2;
         let limit = 1000;
         let mut tasks = Vec::new();
-        let len = 10240;
         for i in 0..concurrency {
-            let start = i * 1000;
-            let end = (i + 1) * 1000;
+            let start = i * limit;
+            let end = (i + 1) * limit;
             let engine_clone = engine.clone();
             let task = tokio::spawn(async move {
                 let tuples = (start..end)
                     .map(|id| {
-                        Tuple::new(vec![Value::Bigint(id), Value::String("Mike".to_string())])
+                        Tuple::new(
+                            vec![Value::Bigint(id), Value::String("Mike".to_string())],
+                            0,
+                        )
                     })
                     .collect::<Vec<_>>();
                 engine_clone.insert("user", tuples.clone()).await?;
@@ -281,7 +278,7 @@ mod tests {
             let engine_clone = engine.clone();
             let task = tokio::spawn(async move {
                 for id in start..end {
-                    engine_clone.read("user", &vec![Value::Bigint(id)]).await?;
+                    engine_clone.read("user", &Value::Bigint(id)).await?;
                 }
                 Ok::<_, Error>(())
             });
@@ -297,7 +294,7 @@ mod tests {
             let engine_clone = engine.clone();
             let task = tokio::spawn(async move {
                 for id in start..end {
-                    let res = engine_clone.read("user", &vec![Value::Bigint(id)]).await?;
+                    let res = engine_clone.read("user", &Value::Bigint(id)).await?;
                     assert!(res.is_some());
                 }
                 Ok::<_, Error>(())

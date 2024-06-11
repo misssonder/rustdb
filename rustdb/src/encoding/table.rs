@@ -4,7 +4,7 @@ use crate::encoding::{Decoder, Encoder};
 use crate::sql::types::Value;
 use crate::storage::page::column::Column;
 use crate::storage::page::table::{Table, TableNode, Tuple};
-use crate::storage::PageId;
+use crate::storage::{PageId, TimeStamp};
 use bytes::{Buf, BufMut};
 
 impl Decoder for Tuple {
@@ -13,8 +13,9 @@ impl Decoder for Tuple {
         B: Buf,
     {
         Ok(Self {
-            values: Vec::<Value>::decode(buf)?,
+            timestamp: TimeStamp::decode(buf)?,
             deleted: bool::decode(buf)?,
+            values: Vec::<Value>::decode(buf)?,
         })
     }
 }
@@ -24,15 +25,16 @@ impl Encoder for Tuple {
     where
         B: BufMut,
     {
-        self.values.encode(buf)?;
+        self.timestamp.encode(buf)?;
         self.deleted.encode(buf)?;
+        self.values.encode(buf)?;
         Ok(())
     }
 }
 
 impl EncodedSize for Tuple {
     fn encoded_size(&self) -> usize {
-        self.values.encoded_size() + self.deleted.encoded_size()
+        self.timestamp.encoded_size() + self.deleted.encoded_size() + self.values.encoded_size()
     }
 }
 
@@ -110,7 +112,7 @@ mod tests {
     use super::*;
     use ordered_float::OrderedFloat;
 
-    use crate::sql::types::{DataType, Value};
+    use crate::sql::types::DataType;
     use crate::storage::PAGE_SIZE;
 
     #[test]
@@ -143,16 +145,19 @@ mod tests {
         let table_node = TableNode {
             page_id: 256,
             next: None,
-            tuples: vec![Tuple::new(vec![
-                Value::Null,
-                Value::Tinyint(2),
-                Value::Smallint(4),
-                Value::Integer(6),
-                Value::Bigint(1024),
-                Value::Float(1.2.into()),
-                Value::Double(OrderedFloat(1.2)),
-                Value::String("Hello world".into()),
-            ])],
+            tuples: vec![Tuple::new(
+                vec![
+                    Value::Null,
+                    Value::Tinyint(2),
+                    Value::Smallint(4),
+                    Value::Integer(6),
+                    Value::Bigint(1024),
+                    Value::Float(1.2.into()),
+                    Value::Double(OrderedFloat(1.2)),
+                    Value::String("Hello world".into()),
+                ],
+                0,
+            )],
         };
         table_node.encode(&mut buffer.as_mut()).unwrap();
         assert_eq!(
