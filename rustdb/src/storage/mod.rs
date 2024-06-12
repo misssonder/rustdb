@@ -12,7 +12,6 @@ use thiserror::Error;
 pub mod disk;
 mod engine;
 mod index;
-mod mvcc;
 pub mod page;
 pub mod table;
 
