@@ -46,6 +46,12 @@ pub enum Value {
     String(String),
 }
 
+impl Default for Value {
+    fn default() -> Self {
+        Self::Null
+    }
+}
+
 impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.write_str(

@@ -1,4 +1,4 @@
-use crate::encoding::{Decoder, Encoder};
+use crate::sql::types::Value;
 use crate::storage::page::column::Column;
 use crate::storage::page::table::{Tuple, Tuples};
 use crate::storage::table::Table;
@@ -6,7 +6,7 @@ use crate::{buffer, encoding};
 use futures::Stream;
 use std::future::Future;
 use std::ops::RangeBounds;
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicU64, AtomicUsize};
 use thiserror::Error;
 
 pub mod disk;
@@ -20,6 +20,8 @@ pub type PageId = usize;
 
 pub type AtomicPageId = AtomicUsize;
 pub const NULL_PAGE: PageId = PageId::MAX;
+pub type TimeStamp = u64;
+pub type AtomicTimeStamp = AtomicU64;
 
 #[derive(Debug, Copy, Clone, PartialOrd, PartialEq)]
 pub struct RecordId {
@@ -49,7 +51,6 @@ pub enum Error {
 }
 
 pub trait Storage {
-    type Key: Decoder + Encoder + Ord;
     fn create_table<T: Into<String> + Clone>(
         &self,
         name: T,
@@ -62,17 +63,10 @@ pub trait Storage {
 
     fn insert(&self, name: &str, tuples: Tuples) -> impl Future<Output = StorageResult<usize>>;
 
-    fn read(
-        &self,
-        name: &str,
-        key: &Self::Key,
-    ) -> impl Future<Output = StorageResult<Option<Tuple>>>;
+    fn read(&self, name: &str, key: &Value) -> impl Future<Output = StorageResult<Option<Tuple>>>;
 
-    fn delete(
-        &self,
-        name: &str,
-        key: &Self::Key,
-    ) -> impl Future<Output = StorageResult<Option<Tuple>>>;
+    fn delete(&self, name: &str, key: &Value)
+        -> impl Future<Output = StorageResult<Option<Tuple>>>;
 
     fn update(&self, name: &str, tuple: Tuple) -> impl Future<Output = StorageResult<Option<()>>>;
 
@@ -82,6 +76,6 @@ pub trait Storage {
         range: R,
     ) -> impl Future<Output = StorageResult<impl Stream<Item = StorageResult<Tuple>>>>
     where
-        R: RangeBounds<&'a Self::Key>,
-        Self::Key: 'a;
+        R: RangeBounds<&'a Value>,
+        Value: 'a;
 }
