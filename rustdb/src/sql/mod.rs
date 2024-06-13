@@ -3,6 +3,7 @@ use thiserror::Error;
 mod catalog;
 mod engine;
 mod execution;
+mod parser;
 mod transaction;
 pub mod types;
 
