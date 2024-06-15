@@ -1,3 +1,10 @@
+use crate::sql::parser::IResult;
+use crate::sql::types::expression::Expression;
+use nom::branch::alt;
+use nom::bytes::complete::tag_no_case;
+use nom::combinator::{map, opt};
+use nom::error::context;
+use nom::multi::many0;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ArithmeticExpression {
@@ -152,4 +159,35 @@ impl Operator for PostfixOperator {
     fn prec(&self) -> u8 {
         8
     }
+}
+
+fn pre_operator(i: &[u8]) -> IResult<&[u8], PrefixOperator> {
+    context(
+        "PrefixOperator",
+        alt((
+            map(tag_no_case("-"), |_| PrefixOperator::Minus),
+            map(tag_no_case("+"), |_| PrefixOperator::Plus),
+        )),
+    )(i)
+}
+
+fn infix_operator(i: &[u8]) -> IResult<&[u8], InfixOperator> {
+    context(
+        "InfixOperator",
+        alt((
+            map(tag_no_case("+"), |_| InfixOperator::Add),
+            map(tag_no_case("-"), |_| InfixOperator::Subtract),
+            map(tag_no_case("*"), |_| InfixOperator::Multiply),
+            map(tag_no_case("/"), |_| InfixOperator::Divide),
+            map(tag_no_case("^"), |_| InfixOperator::Exponentiate),
+            map(tag_no_case("%"), |_| InfixOperator::Modulo),
+        )),
+    )(i)
+}
+
+fn post_operator(i: &[u8]) -> IResult<&[u8], PostfixOperator> {
+    context(
+        "InfixOperator",
+        map(tag_no_case("!"), |_| PostfixOperator::Factorial),
+    )(i)
 }

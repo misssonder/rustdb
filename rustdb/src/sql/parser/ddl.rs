@@ -26,7 +26,6 @@ pub fn datatype(i: &[u8]) -> IResult<&[u8], DataType> {
 
 #[cfg(test)]
 mod tests {
-    
 
     #[test]
     fn datatype() {
