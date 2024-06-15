@@ -1,10 +1,12 @@
 pub(crate) mod expression;
 
 use crate::sql::catalog::Column;
+use crate::sql::Error;
 use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::fmt::Formatter;
+use std::str::FromStr;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum DataType {
@@ -18,9 +20,25 @@ pub enum DataType {
     String,
 }
 
-impl std::fmt::Display for DataType {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
+impl FromStr for DataType {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "BOOLEAN" => Self::Boolean,
+            "TINYINT" => Self::Tinyint,
+            "SMALLINT" => Self::Smallint,
+            "INTEGER" => Self::Integer,
+            "BIGINT" => Self::Float,
+            "FLOAT" => Self::Double,
+            "STRING" => Self::String,
+            _ => return Err(Error::FromStr(format!("Can't convert {} to DataType", s))),
+        })
+    }
+}
+impl DataType {
+    pub fn as_str(&self) -> &str {
+        match self {
             DataType::Boolean => "BOOLEAN",
             DataType::Tinyint => "TINYINT",
             DataType::Smallint => "SMALLINT",
@@ -29,7 +47,13 @@ impl std::fmt::Display for DataType {
             DataType::Float => "FLOAT",
             DataType::Double => "DOUBLE",
             DataType::String => "STRING",
-        })
+        }
+    }
+}
+
+impl std::fmt::Display for DataType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 

@@ -10,6 +10,7 @@ async-stream.workspace = true
 bytes.workspace = true
 futures.workspace = true
 indexmap.workspace = true
+nom.workspace = true
 ordered-float = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
