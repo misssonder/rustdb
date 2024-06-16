@@ -1,4 +1,5 @@
 use crate::sql::parser::arithmetic::ArithmeticExpression;
+use crate::sql::parser::ddl::CreateTable;
 use crate::sql::types::DataType;
 use std::collections::BTreeMap;
 
@@ -12,10 +13,7 @@ pub enum Statement {
     Rollback,
     Explain(Box<Statement>),
 
-    CreateTable {
-        name: String,
-        columns: Vec<Column>,
-    },
+    CreateTable(CreateTable),
     DropTable {
         name: String,
         if_exists: bool,

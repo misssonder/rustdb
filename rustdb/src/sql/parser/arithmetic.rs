@@ -16,7 +16,7 @@ pub enum ArithmeticExpression {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-enum Literal {
+pub enum Literal {
     Integer(i64),
     Float(f64),
 }
@@ -161,7 +161,7 @@ impl Operator for PostfixOperator {
     }
 }
 
-fn arith_expression(prec_min: u8) -> impl FnMut(&[u8]) -> IResult<&[u8], ArithmeticExpression> {
+pub fn arith_expression(prec_min: u8) -> impl FnMut(&str) -> IResult<&str, ArithmeticExpression> {
     move |i| {
         let (i, prefix) = opt(pre_operator)(i)?;
         let (i, mut lhs) = if let Some(prefix) = prefix {
@@ -185,7 +185,7 @@ fn arith_expression(prec_min: u8) -> impl FnMut(&[u8]) -> IResult<&[u8], Arithme
     }
 }
 
-fn arith_expression_atom(i: &[u8]) -> IResult<&[u8], ArithmeticExpression> {
+fn arith_expression_atom(i: &str) -> IResult<&str, ArithmeticExpression> {
     context(
         "expression atom",
         alt((
@@ -195,7 +195,7 @@ fn arith_expression_atom(i: &[u8]) -> IResult<&[u8], ArithmeticExpression> {
     )(i)
 }
 
-fn literal(i: &[u8]) -> IResult<&[u8], Literal> {
+fn literal(i: &str) -> IResult<&str, Literal> {
     context(
         "literal",
         alt((
@@ -208,7 +208,7 @@ fn literal(i: &[u8]) -> IResult<&[u8], Literal> {
     )(i)
 }
 
-fn pre_operator(i: &[u8]) -> IResult<&[u8], PrefixOperator> {
+fn pre_operator(i: &str) -> IResult<&str, PrefixOperator> {
     context(
         "prefix operator",
         alt((
@@ -218,7 +218,7 @@ fn pre_operator(i: &[u8]) -> IResult<&[u8], PrefixOperator> {
     )(i)
 }
 
-fn infix_operator(i: &[u8]) -> IResult<&[u8], InfixOperator> {
+fn infix_operator(i: &str) -> IResult<&str, InfixOperator> {
     context(
         "infix operator",
         alt((
@@ -232,7 +232,7 @@ fn infix_operator(i: &[u8]) -> IResult<&[u8], InfixOperator> {
     )(i)
 }
 
-fn post_operator(i: &[u8]) -> IResult<&[u8], PostfixOperator> {
+fn post_operator(i: &str) -> IResult<&str, PostfixOperator> {
     context(
         "post operator",
         map(tag_no_case("!"), |_| PostfixOperator::Factorial),
@@ -243,13 +243,13 @@ fn post_operator(i: &[u8]) -> IResult<&[u8], PostfixOperator> {
 mod tests {
     use super::*;
 
-    fn expression(input: &[u8]) -> IResult<&[u8], ArithmeticExpression> {
+    fn expression(input: &str) -> IResult<&str, ArithmeticExpression> {
         super::arith_expression(0)(input)
     }
     #[test]
     fn literal() {
-        assert_eq!(super::literal(b"1.0").unwrap().1, Literal::Float(1.0));
-        assert_eq!(super::literal(b"1").unwrap().1, Literal::Integer(1));
+        assert_eq!(super::literal("1.0").unwrap().1, Literal::Float(1.0));
+        assert_eq!(super::literal("1").unwrap().1, Literal::Integer(1));
     }
     #[test]
     fn arith_expression() {
@@ -280,7 +280,7 @@ mod tests {
         assert_eq!(
             input
                 .into_iter()
-                .map(|i| expression(i.as_bytes()).map(|(_, expression)| expression))
+                .map(|i| expression(i).map(|(_, expression)| expression))
                 .collect::<Vec<_>>(),
             output
         )
