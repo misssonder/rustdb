@@ -1,10 +1,13 @@
 use crate::sql::parser::IResult;
-use crate::sql::types::expression::Expression;
 use nom::branch::alt;
-use nom::bytes::complete::tag_no_case;
-use nom::combinator::{map, opt};
+use nom::bytes::complete::{tag, tag_no_case};
+use nom::character::complete::i64;
+use nom::combinator::{map, not, opt};
 use nom::error::context;
 use nom::multi::many0;
+use nom::number::complete::double;
+use nom::sequence::{delimited, tuple};
+use nom::Parser;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ArithmeticExpression {
@@ -13,12 +16,9 @@ pub enum ArithmeticExpression {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum Literal {
-    Null,
-    Boolean(bool),
+enum Literal {
     Integer(i64),
     Float(f64),
-    String(String),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -161,9 +161,56 @@ impl Operator for PostfixOperator {
     }
 }
 
+fn arith_expression(prec_min: u8) -> impl FnMut(&[u8]) -> IResult<&[u8], ArithmeticExpression> {
+    move |i| {
+        let (i, prefix) = opt(pre_operator)(i)?;
+        let (i, mut lhs) = if let Some(prefix) = prefix {
+            let (i, expression) = arith_expression(prefix.prec() + prefix.assoc())(i)?;
+            (i, prefix.build(expression))
+        } else {
+            arith_expression_atom(i)?
+        };
+        let (i, postfixes) = many0(post_operator)(i)?;
+        for postfix in postfixes {
+            lhs = postfix.build(lhs);
+        }
+        let (mut i, infixes) = many0(infix_operator)(i)?;
+        let input = i;
+        for infix in infixes {
+            let (input, expression) = arith_expression(infix.prec() + infix.assoc())(input)?;
+            lhs = infix.build(lhs, expression);
+            i = input;
+        }
+        Ok((i, lhs))
+    }
+}
+
+fn arith_expression_atom(i: &[u8]) -> IResult<&[u8], ArithmeticExpression> {
+    context(
+        "expression atom",
+        alt((
+            map(literal, ArithmeticExpression::Literal),
+            delimited(tag("("), arith_expression(0), tag(")")),
+        )),
+    )(i)
+}
+
+fn literal(i: &[u8]) -> IResult<&[u8], Literal> {
+    context(
+        "literal",
+        alt((
+            map(
+                tuple((i64, not(alt((tag("."), tag_no_case("e")))))),
+                |(integer, _)| Literal::Integer(integer),
+            ),
+            map(double, Literal::Float),
+        )),
+    )(i)
+}
+
 fn pre_operator(i: &[u8]) -> IResult<&[u8], PrefixOperator> {
     context(
-        "PrefixOperator",
+        "prefix operator",
         alt((
             map(tag_no_case("-"), |_| PrefixOperator::Minus),
             map(tag_no_case("+"), |_| PrefixOperator::Plus),
@@ -173,7 +220,7 @@ fn pre_operator(i: &[u8]) -> IResult<&[u8], PrefixOperator> {
 
 fn infix_operator(i: &[u8]) -> IResult<&[u8], InfixOperator> {
     context(
-        "InfixOperator",
+        "infix operator",
         alt((
             map(tag_no_case("+"), |_| InfixOperator::Add),
             map(tag_no_case("-"), |_| InfixOperator::Subtract),
@@ -187,7 +234,54 @@ fn infix_operator(i: &[u8]) -> IResult<&[u8], InfixOperator> {
 
 fn post_operator(i: &[u8]) -> IResult<&[u8], PostfixOperator> {
     context(
-        "InfixOperator",
+        "post operator",
         map(tag_no_case("!"), |_| PostfixOperator::Factorial),
     )(i)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn expression(input: &[u8]) -> IResult<&[u8], ArithmeticExpression> {
+        super::arith_expression(0)(input)
+    }
+    #[test]
+    fn literal() {
+        println!("{:?}", super::literal(b"1.0"));
+    }
+    #[test]
+    fn arith_expression() {
+        let input = vec!["1+2*3", "(1+2)*3", "(1.0+2)*3"];
+        let output = vec![
+            Ok(ArithmeticExpression::Operation(Operation::Add(
+                Box::new(ArithmeticExpression::Literal(Literal::Integer(1))),
+                Box::new(ArithmeticExpression::Operation(Operation::Multiply(
+                    Box::new(ArithmeticExpression::Literal(Literal::Integer(2))),
+                    Box::new(ArithmeticExpression::Literal(Literal::Integer(3))),
+                ))),
+            ))),
+            Ok(ArithmeticExpression::Operation(Operation::Multiply(
+                Box::new(ArithmeticExpression::Operation(Operation::Add(
+                    Box::new(ArithmeticExpression::Literal(Literal::Integer(1))),
+                    Box::new(ArithmeticExpression::Literal(Literal::Integer(2))),
+                ))),
+                Box::new(ArithmeticExpression::Literal(Literal::Integer(3))),
+            ))),
+            Ok(ArithmeticExpression::Operation(Operation::Multiply(
+                Box::new(ArithmeticExpression::Operation(Operation::Add(
+                    Box::new(ArithmeticExpression::Literal(Literal::Float(1.0))),
+                    Box::new(ArithmeticExpression::Literal(Literal::Integer(2))),
+                ))),
+                Box::new(ArithmeticExpression::Literal(Literal::Integer(3))),
+            ))),
+        ];
+        assert_eq!(
+            input
+                .into_iter()
+                .map(|i| expression(i.as_bytes()).map(|(_, expression)| expression))
+                .collect::<Vec<_>>(),
+            output
+        )
+    }
 }
