@@ -248,7 +248,8 @@ mod tests {
     }
     #[test]
     fn literal() {
-        println!("{:?}", super::literal(b"1.0"));
+        assert_eq!(super::literal(b"1.0").unwrap().1, Literal::Float(1.0));
+        assert_eq!(super::literal(b"1").unwrap().1, Literal::Integer(1));
     }
     #[test]
     fn arith_expression() {
