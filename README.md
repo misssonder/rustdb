@@ -9,3 +9,4 @@ RustDB is the rust implementation of [bustub](https://github.com/cmu-db/bustub),
   - [x] Insert
   - [x] Delete
   - [X] Concurrency
+- [ ] Parsing

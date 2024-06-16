@@ -1,5 +1,4 @@
 use crate::sql::parser::arithmetic::{arith_expression, ArithmeticExpression};
-use crate::sql::parser::ast::Column;
 use crate::sql::parser::keyword::Keyword;
 use crate::sql::parser::{identifier, IResult};
 use crate::sql::types::DataType;
@@ -12,11 +11,61 @@ use nom::error::context;
 use nom::multi::separated_list1;
 use nom::sequence::{delimited, preceded, tuple};
 use nom::Parser;
+use std::fmt::{Debug, Formatter};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct CreateTable {
     pub name: String,
     pub columns: Vec<Column>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Column {
+    pub name: String,
+    pub datatype: DataType,
+    pub primary_key: bool,
+    pub nullable: Option<bool>,
+    pub default: Option<ArithmeticExpression>,
+    pub unique: bool,
+    pub index: bool,
+    pub references: Option<String>,
+}
+
+impl std::fmt::Display for CreateTable {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "CREATE TABLE {}", self.name)?;
+        write!(f, "(")?;
+        for column in &self.columns {
+            write!(f, "{}", column)?;
+        }
+        write!(f, ")")
+    }
+}
+
+impl std::fmt::Display for Column {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} ", self.name)?;
+        write!(f, "{} ", self.datatype.as_str())?;
+        if self.primary_key {
+            write!(f, "PRIMARY ")?;
+        }
+        if self.nullable.unwrap_or_default() {
+            write!(f, "NOT NULL ")?;
+        }
+        if let Some(ArithmeticExpression::Literal(ref default)) = self.default {
+            write!(f, "DEFAULT {}", default)?;
+        }
+        if self.unique {
+            write!(f, "UNIQUE ")?;
+        }
+        if self.index {
+            write!(f, "INDEX ")?;
+        }
+        if let Some(ref references) = self.references {
+            write!(f, "REFERENCE {}", references)?;
+        }
+        Ok(())
+    }
 }
 
 pub fn create(i: &str) -> IResult<&str, CreateTable> {
@@ -140,8 +189,7 @@ pub(crate) fn space_close_paren(i: &str) -> IResult<&str, &str> {
 #[cfg(test)]
 mod tests {
     use crate::sql::parser::arithmetic::{ArithmeticExpression, Literal};
-    use crate::sql::parser::ast::Column;
-    use crate::sql::parser::ddl::{create, CreateTable};
+    use crate::sql::parser::ddl::{create, Column, CreateTable};
     use crate::sql::types::DataType;
 
     use nom::Finish;

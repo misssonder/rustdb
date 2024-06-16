@@ -1,6 +1,5 @@
 use crate::sql::parser::arithmetic::ArithmeticExpression;
 use crate::sql::parser::ddl::CreateTable;
-use crate::sql::types::DataType;
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -44,18 +43,6 @@ pub enum Statement {
         offset: Option<ArithmeticExpression>,
         limit: Option<ArithmeticExpression>,
     },
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct Column {
-    pub name: String,
-    pub datatype: DataType,
-    pub primary_key: bool,
-    pub nullable: Option<bool>,
-    pub default: Option<ArithmeticExpression>,
-    pub unique: bool,
-    pub index: bool,
-    pub references: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

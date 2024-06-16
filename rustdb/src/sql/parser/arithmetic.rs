@@ -1,13 +1,15 @@
+use crate::sql::parser::keyword::Keyword;
 use crate::sql::parser::IResult;
 use nom::branch::alt;
 use nom::bytes::complete::{tag, tag_no_case};
-use nom::character::complete::i64;
+use nom::character::complete::{alpha1, i64};
 use nom::combinator::{map, not, opt};
 use nom::error::context;
 use nom::multi::many0;
 use nom::number::complete::double;
 use nom::sequence::{delimited, tuple};
 use nom::Parser;
+use std::fmt::{Debug, Formatter};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ArithmeticExpression {
@@ -17,8 +19,23 @@ pub enum ArithmeticExpression {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Literal {
+    Null,
+    Boolean(bool),
     Integer(i64),
     Float(f64),
+    String(String),
+}
+
+impl std::fmt::Display for Literal {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Literal::Integer(i) => write!(f, "{}", i),
+            Literal::Float(float) => write!(f, "{}", float),
+            Literal::String(s) => write!(f, "{}", s),
+            Literal::Null => write!(f, "NULL"),
+            Literal::Boolean(bool) => write!(f, "{}", bool),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -204,6 +221,14 @@ fn literal(i: &str) -> IResult<&str, Literal> {
                 |(integer, _)| Literal::Integer(integer),
             ),
             map(double, Literal::Float),
+            map(alpha1, |s: &str| Literal::String(s.to_string())),
+            map(tag_no_case(Keyword::Null.to_str()), |_| Literal::Null),
+            map(tag_no_case(Keyword::False.to_str()), |_| {
+                Literal::Boolean(false)
+            }),
+            map(tag_no_case(Keyword::True.to_str()), |_| {
+                Literal::Boolean(true)
+            }),
         )),
     )(i)
 }
