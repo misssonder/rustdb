@@ -1,24 +1,32 @@
 use crate::sql::parser::keyword::Keyword;
-use crate::sql::parser::IResult;
+use crate::sql::parser::{identifier, IResult};
 use nom::branch::alt;
 use nom::bytes::complete::{tag, tag_no_case};
-use nom::character::complete::{alpha1, i64};
-use nom::combinator::{map, not, opt};
+use nom::character::complete::{alpha1, i64, multispace0};
+use nom::combinator::{map, not, opt, peek};
 use nom::error::context;
-use nom::multi::many0;
 use nom::number::complete::double;
-use nom::sequence::{delimited, tuple};
+use nom::sequence::{delimited, preceded, tuple};
 use nom::Parser;
 use std::fmt::{Debug, Formatter};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Expression {
     Literal(Literal),
+    Field(Option<String>, String),
+    Column(usize),
     Operation(Operation),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+impl Default for Expression {
+    fn default() -> Self {
+        Self::Literal(Literal::default())
+    }
+}
+
+#[derive(Default, Clone, Debug, PartialEq)]
 pub enum Literal {
+    #[default]
     Null,
     Boolean(bool),
     Integer(i64),
@@ -87,6 +95,7 @@ const ASSOC_LEFT: u8 = 1;
 const ASSOC_RIGHT: u8 = 0;
 
 /// Prefix operators
+#[derive(Debug)]
 enum PrefixOperator {
     Minus,
     Not,
@@ -114,6 +123,7 @@ impl Operator for PrefixOperator {
     }
 }
 
+#[derive(Debug)]
 enum InfixOperator {
     Add,
     And,
@@ -183,7 +193,6 @@ impl Operator for InfixOperator {
 
 enum PostfixOperator {
     Factorial,
-    IsNull { not: bool },
 }
 
 impl PostfixOperator {
@@ -191,10 +200,6 @@ impl PostfixOperator {
         let lhs = Box::new(lhs);
         match self {
             PostfixOperator::Factorial => Operation::Factorial(lhs),
-            Self::IsNull { not } => match not {
-                true => Operation::Not(Box::new(Operation::IsNull(lhs).into())),
-                false => Operation::IsNull(lhs),
-            },
         }
         .into()
     }
@@ -210,25 +215,35 @@ impl Operator for PostfixOperator {
     }
 }
 
+/// Ugly implement precedence climbing
 pub fn expression(prec_min: u8) -> impl FnMut(&str) -> IResult<&str, Expression> {
     move |i| {
-        let (i, prefix) = opt(pre_operator)(i)?;
-        let (i, mut lhs) = if let Some(prefix) = prefix {
+        let (i, prefix) = min_prec_pre_operator(prec_min)(i)?;
+        let (mut i, mut lhs) = if let Some(prefix) = prefix {
             let (i, expression) = expression(prefix.prec() + prefix.assoc())(i)?;
             (i, prefix.build(expression))
         } else {
             expression_atom(i)?
         };
-        let (i, postfixes) = many0(post_operator)(i)?;
-        for postfix in postfixes {
-            lhs = postfix.build(lhs);
+        let mut postfix = None;
+        loop {
+            (i, postfix) = min_prec_post_operator(prec_min)(i)?;
+            if let Some(postfix) = postfix {
+                lhs = postfix.build(lhs);
+            } else {
+                break;
+            }
         }
-        let (mut i, infixes) = many0(infix_operator)(i)?;
-        let input = i;
-        for infix in infixes {
-            let (input, expression) = expression(infix.prec() + infix.assoc())(input)?;
-            lhs = infix.build(lhs, expression);
-            i = input;
+        let mut infix = None;
+        let mut rhs = Expression::default();
+        loop {
+            (i, infix) = min_prec_infix_operator(prec_min)(i)?;
+            if let Some(infix) = infix {
+                (i, rhs) = expression(infix.prec() + infix.assoc())(i)?;
+                lhs = infix.build(lhs, rhs);
+            } else {
+                break;
+            }
         }
         Ok((i, lhs))
     }
@@ -237,10 +252,22 @@ pub fn expression(prec_min: u8) -> impl FnMut(&str) -> IResult<&str, Expression>
 fn expression_atom(i: &str) -> IResult<&str, Expression> {
     context(
         "expression atom",
-        alt((
-            map(literal, Expression::Literal),
-            delimited(tag("("), expression(0), tag(")")),
-        )),
+        preceded(
+            multispace0,
+            alt((
+                map(literal, Expression::Literal),
+                delimited(tag("("), expression(0), tag(")")),
+                map(
+                    tuple((identifier, opt(preceded(tag("."), identifier)))),
+                    |(field, relation)| {
+                        Expression::Field(
+                            relation.map(|relation| relation.to_string()),
+                            field.to_string(),
+                        )
+                    },
+                ),
+            )),
+        ),
     )(i)
 }
 
@@ -253,7 +280,9 @@ fn literal(i: &str) -> IResult<&str, Literal> {
                 |(integer, _)| Literal::Integer(integer),
             ),
             map(double, Literal::Float),
-            map(alpha1, |s: &str| Literal::String(s.to_string())),
+            map(delimited(tag("'"), alpha1, tag("'")), |s: &str| {
+                Literal::String(s.to_string())
+            }),
             map(tag_no_case(Keyword::Null.to_str()), |_| Literal::Null),
             map(tag_no_case(Keyword::False.to_str()), |_| {
                 Literal::Boolean(false)
@@ -268,49 +297,103 @@ fn literal(i: &str) -> IResult<&str, Literal> {
 fn pre_operator(i: &str) -> IResult<&str, PrefixOperator> {
     context(
         "prefix operator",
-        alt((
-            map(tag_no_case("-"), |_| PrefixOperator::Minus),
-            map(tag_no_case(Keyword::Not.to_str()), |_| PrefixOperator::Not),
-            map(tag_no_case("+"), |_| PrefixOperator::Plus),
-        )),
+        preceded(
+            multispace0,
+            alt((
+                map(tag_no_case("-"), |_| PrefixOperator::Minus),
+                map(tag_no_case(Keyword::Not.to_str()), |_| PrefixOperator::Not),
+                map(tag_no_case("+"), |_| PrefixOperator::Plus),
+            )),
+        ),
     )(i)
 }
 
 fn infix_operator(i: &str) -> IResult<&str, InfixOperator> {
     context(
         "infix operator",
-        alt((
-            map(tag_no_case("+"), |_| InfixOperator::Add),
-            map(tag_no_case(Keyword::And.to_str()), |_| InfixOperator::And),
-            map(tag_no_case("/"), |_| InfixOperator::Divide),
-            map(tag_no_case("="), |_| InfixOperator::Equal),
-            map(tag_no_case("^"), |_| InfixOperator::Exponentiate),
-            map(tag_no_case(">"), |_| InfixOperator::GreaterThan),
-            map(tag_no_case(">="), |_| InfixOperator::GreaterThanOrEqual),
-            map(tag_no_case("<"), |_| InfixOperator::LessThan),
-            map(tag_no_case("<="), |_| InfixOperator::LessThanOrEqual),
-            map(tag_no_case(Keyword::Like.to_str()), |_| InfixOperator::Like),
-            map(tag_no_case("%"), |_| InfixOperator::Modulo),
-            map(tag_no_case("*"), |_| InfixOperator::Multiply),
-            map(tag_no_case("!="), |_| InfixOperator::NotEqual),
-            map(tag_no_case(Keyword::Or.to_str()), |_| InfixOperator::Or),
-            map(tag_no_case("-"), |_| InfixOperator::Subtract),
-        )),
+        preceded(
+            multispace0,
+            alt((
+                map(tag_no_case("+"), |_| InfixOperator::Add),
+                map(tag_no_case(Keyword::And.to_str()), |_| InfixOperator::And),
+                map(tag_no_case("/"), |_| InfixOperator::Divide),
+                map(tag_no_case("="), |_| InfixOperator::Equal),
+                map(tag_no_case("^"), |_| InfixOperator::Exponentiate),
+                map(tag_no_case(">"), |_| InfixOperator::GreaterThan),
+                map(tag_no_case(">="), |_| InfixOperator::GreaterThanOrEqual),
+                map(tag_no_case("<"), |_| InfixOperator::LessThan),
+                map(tag_no_case("<="), |_| InfixOperator::LessThanOrEqual),
+                map(tag_no_case(Keyword::Like.to_str()), |_| InfixOperator::Like),
+                map(tag_no_case("%"), |_| InfixOperator::Modulo),
+                map(tag_no_case("*"), |_| InfixOperator::Multiply),
+                map(tag_no_case("!="), |_| InfixOperator::NotEqual),
+                map(tag_no_case(Keyword::Or.to_str()), |_| InfixOperator::Or),
+                map(tag_no_case("-"), |_| InfixOperator::Subtract),
+            )),
+        ),
     )(i)
 }
 
 fn post_operator(i: &str) -> IResult<&str, PostfixOperator> {
     context(
         "post operator",
-        alt((
-            map(tag_no_case("!"), |_| PostfixOperator::Factorial),
-            map(tag_no_case(Keyword::Is.to_str()), |_| {
-                PostfixOperator::IsNull { not: false }
-            }),
-        )),
+        preceded(
+            multispace0,
+            alt((map(tag_no_case("!"), |_| PostfixOperator::Factorial),)),
+        ),
     )(i)
 }
 
+fn min_prec_pre_operator(
+    min_prec: u8,
+) -> impl FnMut(&str) -> IResult<&str, Option<PrefixOperator>> {
+    move |i| {
+        opt(peek(pre_operator))(i).and_then(|(remaining, operator)| match operator {
+            None => Ok((i, None)),
+            Some(operator) => {
+                if operator.prec() >= min_prec {
+                    pre_operator(i).map(|(remaining, operator)| (remaining, Some(operator)))
+                } else {
+                    Ok((i, None))
+                }
+            }
+        })
+    }
+}
+
+fn min_prec_infix_operator(
+    min_prec: u8,
+) -> impl FnMut(&str) -> IResult<&str, Option<InfixOperator>> {
+    move |i| {
+        opt(peek(infix_operator))(i).and_then(|(remaining, operator)| match operator {
+            None => Ok((i, None)),
+            Some(operator) => {
+                if operator.prec() >= min_prec {
+                    infix_operator(i).map(|(remaining, operator)| (remaining, Some(operator)))
+                } else {
+                    Ok((i, None))
+                }
+            }
+        })
+    }
+}
+
+fn min_prec_post_operator(
+    min_prec: u8,
+) -> impl FnMut(&str) -> IResult<&str, Option<PostfixOperator>> {
+    move |i| {
+        opt(peek(post_operator))(i).and_then(|(remaining, operator)| match operator {
+            None => Ok((i, None)),
+            Some(operator) => {
+                if operator.prec() >= min_prec {
+                    post_operator(i).map(|(remaining, operator)| (remaining, Some(operator)))
+                } else {
+                    Ok((i, None))
+                }
+            }
+        })
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -355,6 +438,11 @@ mod tests {
                 .map(|i| expression(i).map(|(_, expression)| expression))
                 .collect::<Vec<_>>(),
             output
-        )
+        );
+        assert_eq!(expression("1 + 2 * 3"), expression("1 + (2 * 3)"));
+        assert_eq!(
+            expression("a.user = 'John' and b.id = 2"),
+            expression("(a.user = 'John') and (b.id = 2)"),
+        );
     }
 }

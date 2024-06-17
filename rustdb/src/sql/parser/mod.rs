@@ -1,9 +1,11 @@
 use crate::sql::parser::keyword::keyword;
+use futures::StreamExt;
 use nom::branch::alt;
 use nom::bytes::complete::{tag, take_while1};
-use nom::combinator::not;
+use nom::character::complete::alpha1;
+use nom::combinator::{not, peek};
 use nom::error::{context, VerboseError};
-use nom::sequence::{delimited, preceded};
+use nom::sequence::{delimited, preceded, tuple};
 
 mod ast;
 mod ddl;
@@ -16,11 +18,23 @@ pub fn identifier(i: &str) -> IResult<&str, &str> {
     context(
         "identifier",
         alt((
-            preceded(not(keyword), take_while1(is_identifier)),
-            delimited(tag("`"), take_while1(is_identifier), tag("`")),
-            delimited(tag("["), take_while1(is_identifier), tag("]")),
+            preceded(
+                not(keyword),
+                tuple((peek(alpha1), take_while1(is_identifier))),
+            ),
+            delimited(
+                tag("`"),
+                tuple((peek(alpha1), take_while1(is_identifier))),
+                tag("`"),
+            ),
+            delimited(
+                tag("["),
+                tuple((peek(alpha1), take_while1(is_identifier))),
+                tag("]"),
+            ),
         )),
     )(i)
+    .map(|(remaining, ident)| (remaining, ident.1))
 }
 
 fn is_identifier(c: char) -> bool {
@@ -32,7 +46,7 @@ mod tests {
 
     #[test]
     fn identifier() {
-        let input = "EmployeeID";
+        let input = "Employee_ID";
         println!("{:?}", super::identifier(input));
     }
 }
