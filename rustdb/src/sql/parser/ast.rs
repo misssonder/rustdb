@@ -1,4 +1,4 @@
-use crate::sql::parser::ddl::CreateTable;
+use crate::sql::parser::ddl::{CreateTable, DropTable};
 use crate::sql::parser::expression::Expression;
 use std::collections::BTreeMap;
 
@@ -13,10 +13,7 @@ pub enum Statement {
     Explain(Box<Statement>),
 
     CreateTable(CreateTable),
-    DropTable {
-        name: String,
-        if_exists: bool,
-    },
+    DropTable(DropTable),
 
     Delete {
         table: String,

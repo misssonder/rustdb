@@ -1,5 +1,5 @@
 use crate::sql::parser::expression::{expression, Expression};
-use crate::sql::parser::keyword::Keyword;
+use crate::sql::parser::keyword::{Keyword};
 use crate::sql::parser::{identifier, IResult};
 use crate::sql::types::DataType;
 use futures::StreamExt;
@@ -17,6 +17,12 @@ use std::fmt::{Debug, Formatter};
 pub struct CreateTable {
     pub name: String,
     pub columns: Vec<Column>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct DropTable {
+    name: String,
+    if_exists: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -118,6 +124,31 @@ fn column(i: &str) -> IResult<&str, Column> {
     )(i)
 }
 
+pub fn drop_table(i: &str) -> IResult<&str, DropTable> {
+    context(
+        "drop table",
+        map(
+            tuple((
+                preceded(
+                    tuple((
+                        preceded(multispace0, tag_no_case(Keyword::Drop.to_str())),
+                        preceded(multispace1, tag_no_case(Keyword::Table.to_str())),
+                    )),
+                    preceded(multispace1, identifier),
+                ),
+                opt(tuple((
+                    preceded(multispace1, tag_no_case(Keyword::If.to_str())),
+                    preceded(multispace1, tag_no_case(Keyword::Exists.to_str())),
+                ))),
+            )),
+            |(name, exists)| DropTable {
+                name: name.to_string(),
+                if_exists: exists.is_some(),
+            },
+        ),
+    )(i)
+}
+
 fn primary_key(i: &str) -> IResult<&str, bool> {
     tag_no_case(Keyword::Primary.to_str())(i).map(|(remaining, primary)| (remaining, true))
 }
@@ -188,7 +219,7 @@ pub(crate) fn space_close_paren(i: &str) -> IResult<&str, &str> {
 
 #[cfg(test)]
 mod tests {
-    use crate::sql::parser::ddl::{create, Column, CreateTable};
+    use crate::sql::parser::ddl::{create, Column, CreateTable, DropTable};
     use crate::sql::parser::expression::{Expression, Literal};
     use crate::sql::types::DataType;
 
@@ -272,6 +303,17 @@ mod tests {
                         references: None,
                     },
                 ],
+            }
+        )
+    }
+
+    #[test]
+    fn drop_table() {
+        assert_eq!(
+            super::drop_table("DROP TABLE USER IF EXISTS").unwrap().1,
+            DropTable {
+                name: "USER".to_string(),
+                if_exists: true,
             }
         )
     }
