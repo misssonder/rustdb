@@ -12,7 +12,7 @@ use nom::Parser;
 use std::fmt::{Debug, Formatter};
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum ArithmeticExpression {
+pub enum Expression {
     Literal(Literal),
     Operation(Operation),
 }
@@ -41,37 +41,37 @@ impl std::fmt::Display for Literal {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Operation {
     // Logical operators
-    And(Box<ArithmeticExpression>, Box<ArithmeticExpression>),
-    Not(Box<ArithmeticExpression>),
-    Or(Box<ArithmeticExpression>, Box<ArithmeticExpression>),
+    And(Box<Expression>, Box<Expression>),
+    Not(Box<Expression>),
+    Or(Box<Expression>, Box<Expression>),
 
     // Comparison operators
-    Equal(Box<ArithmeticExpression>, Box<ArithmeticExpression>),
-    GreaterThan(Box<ArithmeticExpression>, Box<ArithmeticExpression>),
-    GreaterThanOrEqual(Box<ArithmeticExpression>, Box<ArithmeticExpression>),
-    IsNull(Box<ArithmeticExpression>),
-    LessThan(Box<ArithmeticExpression>, Box<ArithmeticExpression>),
-    LessThanOrEqual(Box<ArithmeticExpression>, Box<ArithmeticExpression>),
-    NotEqual(Box<ArithmeticExpression>, Box<ArithmeticExpression>),
+    Equal(Box<Expression>, Box<Expression>),
+    GreaterThan(Box<Expression>, Box<Expression>),
+    GreaterThanOrEqual(Box<Expression>, Box<Expression>),
+    IsNull(Box<Expression>),
+    LessThan(Box<Expression>, Box<Expression>),
+    LessThanOrEqual(Box<Expression>, Box<Expression>),
+    NotEqual(Box<Expression>, Box<Expression>),
 
     // Mathematical operators
-    Add(Box<ArithmeticExpression>, Box<ArithmeticExpression>),
-    Assert(Box<ArithmeticExpression>),
-    Divide(Box<ArithmeticExpression>, Box<ArithmeticExpression>),
-    Exponentiate(Box<ArithmeticExpression>, Box<ArithmeticExpression>),
-    Factorial(Box<ArithmeticExpression>),
-    Modulo(Box<ArithmeticExpression>, Box<ArithmeticExpression>),
-    Multiply(Box<ArithmeticExpression>, Box<ArithmeticExpression>),
-    Negate(Box<ArithmeticExpression>),
-    Subtract(Box<ArithmeticExpression>, Box<ArithmeticExpression>),
+    Add(Box<Expression>, Box<Expression>),
+    Assert(Box<Expression>),
+    Divide(Box<Expression>, Box<Expression>),
+    Exponentiate(Box<Expression>, Box<Expression>),
+    Factorial(Box<Expression>),
+    Modulo(Box<Expression>, Box<Expression>),
+    Multiply(Box<Expression>, Box<Expression>),
+    Negate(Box<Expression>),
+    Subtract(Box<Expression>, Box<Expression>),
 
     // String operators
-    Like(Box<ArithmeticExpression>, Box<ArithmeticExpression>),
+    Like(Box<Expression>, Box<Expression>),
 }
 
-impl From<Operation> for ArithmeticExpression {
+impl From<Operation> for Expression {
     fn from(operation: Operation) -> Self {
-        ArithmeticExpression::Operation(operation)
+        Expression::Operation(operation)
     }
 }
 
@@ -86,17 +86,19 @@ trait Operator: Sized {
 const ASSOC_LEFT: u8 = 1;
 const ASSOC_RIGHT: u8 = 0;
 
+/// Prefix operators
 enum PrefixOperator {
     Minus,
+    Not,
     Plus,
 }
-
 impl PrefixOperator {
-    fn build(&self, lhs: ArithmeticExpression) -> ArithmeticExpression {
+    fn build(&self, lhs: Expression) -> Expression {
         let lhs = Box::new(lhs);
         match self {
             PrefixOperator::Minus => Operation::Negate(lhs),
             PrefixOperator::Plus => Operation::Assert(lhs),
+            PrefixOperator::Not => Operation::Not(lhs),
         }
         .into()
     }
@@ -114,15 +116,24 @@ impl Operator for PrefixOperator {
 
 enum InfixOperator {
     Add,
+    And,
     Divide,
+    Equal,
     Exponentiate,
-    Multiply,
-    Subtract,
+    GreaterThan,
+    GreaterThanOrEqual,
+    LessThan,
+    LessThanOrEqual,
+    Like,
     Modulo,
+    Multiply,
+    NotEqual,
+    Or,
+    Subtract,
 }
 
 impl InfixOperator {
-    fn build(&self, lhs: ArithmeticExpression, rhs: ArithmeticExpression) -> ArithmeticExpression {
+    fn build(&self, lhs: Expression, rhs: Expression) -> Expression {
         let lhs = Box::new(lhs);
         let rhs = Box::new(rhs);
         match self {
@@ -132,6 +143,15 @@ impl InfixOperator {
             InfixOperator::Multiply => Operation::Multiply(lhs, rhs),
             InfixOperator::Subtract => Operation::Subtract(lhs, rhs),
             InfixOperator::Modulo => Operation::Modulo(lhs, rhs),
+            InfixOperator::And => Operation::And(lhs, rhs),
+            InfixOperator::Equal => Operation::Equal(lhs, rhs),
+            InfixOperator::GreaterThan => Operation::GreaterThan(lhs, rhs),
+            InfixOperator::GreaterThanOrEqual => Operation::GreaterThanOrEqual(lhs, rhs),
+            InfixOperator::LessThan => Operation::LessThan(lhs, rhs),
+            InfixOperator::LessThanOrEqual => Operation::LessThanOrEqual(lhs, rhs),
+            InfixOperator::Like => Operation::Like(lhs, rhs),
+            InfixOperator::NotEqual => Operation::NotEqual(lhs, rhs),
+            InfixOperator::Or => Operation::Or(lhs, rhs),
         }
         .into()
     }
@@ -147,6 +167,13 @@ impl Operator for InfixOperator {
 
     fn prec(&self) -> u8 {
         match self {
+            Self::Or => 1,
+            Self::And => 2,
+            Self::Equal | Self::NotEqual | Self::Like => 3,
+            Self::GreaterThan
+            | Self::GreaterThanOrEqual
+            | Self::LessThan
+            | Self::LessThanOrEqual => 4,
             Self::Add | Self::Subtract => 5,
             Self::Multiply | Self::Divide | Self::Modulo => 6,
             Self::Exponentiate => 7,
@@ -156,13 +183,18 @@ impl Operator for InfixOperator {
 
 enum PostfixOperator {
     Factorial,
+    IsNull { not: bool },
 }
 
 impl PostfixOperator {
-    fn build(&self, lhs: ArithmeticExpression) -> ArithmeticExpression {
+    fn build(&self, lhs: Expression) -> Expression {
         let lhs = Box::new(lhs);
         match self {
             PostfixOperator::Factorial => Operation::Factorial(lhs),
+            Self::IsNull { not } => match not {
+                true => Operation::Not(Box::new(Operation::IsNull(lhs).into())),
+                false => Operation::IsNull(lhs),
+            },
         }
         .into()
     }
@@ -178,14 +210,14 @@ impl Operator for PostfixOperator {
     }
 }
 
-pub fn arith_expression(prec_min: u8) -> impl FnMut(&str) -> IResult<&str, ArithmeticExpression> {
+pub fn expression(prec_min: u8) -> impl FnMut(&str) -> IResult<&str, Expression> {
     move |i| {
         let (i, prefix) = opt(pre_operator)(i)?;
         let (i, mut lhs) = if let Some(prefix) = prefix {
-            let (i, expression) = arith_expression(prefix.prec() + prefix.assoc())(i)?;
+            let (i, expression) = expression(prefix.prec() + prefix.assoc())(i)?;
             (i, prefix.build(expression))
         } else {
-            arith_expression_atom(i)?
+            expression_atom(i)?
         };
         let (i, postfixes) = many0(post_operator)(i)?;
         for postfix in postfixes {
@@ -194,7 +226,7 @@ pub fn arith_expression(prec_min: u8) -> impl FnMut(&str) -> IResult<&str, Arith
         let (mut i, infixes) = many0(infix_operator)(i)?;
         let input = i;
         for infix in infixes {
-            let (input, expression) = arith_expression(infix.prec() + infix.assoc())(input)?;
+            let (input, expression) = expression(infix.prec() + infix.assoc())(input)?;
             lhs = infix.build(lhs, expression);
             i = input;
         }
@@ -202,12 +234,12 @@ pub fn arith_expression(prec_min: u8) -> impl FnMut(&str) -> IResult<&str, Arith
     }
 }
 
-fn arith_expression_atom(i: &str) -> IResult<&str, ArithmeticExpression> {
+fn expression_atom(i: &str) -> IResult<&str, Expression> {
     context(
         "expression atom",
         alt((
-            map(literal, ArithmeticExpression::Literal),
-            delimited(tag("("), arith_expression(0), tag(")")),
+            map(literal, Expression::Literal),
+            delimited(tag("("), expression(0), tag(")")),
         )),
     )(i)
 }
@@ -238,6 +270,7 @@ fn pre_operator(i: &str) -> IResult<&str, PrefixOperator> {
         "prefix operator",
         alt((
             map(tag_no_case("-"), |_| PrefixOperator::Minus),
+            map(tag_no_case(Keyword::Not.to_str()), |_| PrefixOperator::Not),
             map(tag_no_case("+"), |_| PrefixOperator::Plus),
         )),
     )(i)
@@ -248,11 +281,20 @@ fn infix_operator(i: &str) -> IResult<&str, InfixOperator> {
         "infix operator",
         alt((
             map(tag_no_case("+"), |_| InfixOperator::Add),
-            map(tag_no_case("-"), |_| InfixOperator::Subtract),
-            map(tag_no_case("*"), |_| InfixOperator::Multiply),
+            map(tag_no_case(Keyword::And.to_str()), |_| InfixOperator::And),
             map(tag_no_case("/"), |_| InfixOperator::Divide),
+            map(tag_no_case("="), |_| InfixOperator::Equal),
             map(tag_no_case("^"), |_| InfixOperator::Exponentiate),
+            map(tag_no_case(">"), |_| InfixOperator::GreaterThan),
+            map(tag_no_case(">="), |_| InfixOperator::GreaterThanOrEqual),
+            map(tag_no_case("<"), |_| InfixOperator::LessThan),
+            map(tag_no_case("<="), |_| InfixOperator::LessThanOrEqual),
+            map(tag_no_case(Keyword::Like.to_str()), |_| InfixOperator::Like),
             map(tag_no_case("%"), |_| InfixOperator::Modulo),
+            map(tag_no_case("*"), |_| InfixOperator::Multiply),
+            map(tag_no_case("!="), |_| InfixOperator::NotEqual),
+            map(tag_no_case(Keyword::Or.to_str()), |_| InfixOperator::Or),
+            map(tag_no_case("-"), |_| InfixOperator::Subtract),
         )),
     )(i)
 }
@@ -260,7 +302,12 @@ fn infix_operator(i: &str) -> IResult<&str, InfixOperator> {
 fn post_operator(i: &str) -> IResult<&str, PostfixOperator> {
     context(
         "post operator",
-        map(tag_no_case("!"), |_| PostfixOperator::Factorial),
+        alt((
+            map(tag_no_case("!"), |_| PostfixOperator::Factorial),
+            map(tag_no_case(Keyword::Is.to_str()), |_| {
+                PostfixOperator::IsNull { not: false }
+            }),
+        )),
     )(i)
 }
 
@@ -268,8 +315,8 @@ fn post_operator(i: &str) -> IResult<&str, PostfixOperator> {
 mod tests {
     use super::*;
 
-    fn expression(input: &str) -> IResult<&str, ArithmeticExpression> {
-        super::arith_expression(0)(input)
+    fn expression(input: &str) -> IResult<&str, Expression> {
+        super::expression(0)(input)
     }
     #[test]
     fn literal() {
@@ -280,26 +327,26 @@ mod tests {
     fn arith_expression() {
         let input = vec!["1+2*3", "(1+2)*3", "(1.0+2)*3"];
         let output = vec![
-            Ok(ArithmeticExpression::Operation(Operation::Add(
-                Box::new(ArithmeticExpression::Literal(Literal::Integer(1))),
-                Box::new(ArithmeticExpression::Operation(Operation::Multiply(
-                    Box::new(ArithmeticExpression::Literal(Literal::Integer(2))),
-                    Box::new(ArithmeticExpression::Literal(Literal::Integer(3))),
+            Ok(Expression::Operation(Operation::Add(
+                Box::new(Expression::Literal(Literal::Integer(1))),
+                Box::new(Expression::Operation(Operation::Multiply(
+                    Box::new(Expression::Literal(Literal::Integer(2))),
+                    Box::new(Expression::Literal(Literal::Integer(3))),
                 ))),
             ))),
-            Ok(ArithmeticExpression::Operation(Operation::Multiply(
-                Box::new(ArithmeticExpression::Operation(Operation::Add(
-                    Box::new(ArithmeticExpression::Literal(Literal::Integer(1))),
-                    Box::new(ArithmeticExpression::Literal(Literal::Integer(2))),
+            Ok(Expression::Operation(Operation::Multiply(
+                Box::new(Expression::Operation(Operation::Add(
+                    Box::new(Expression::Literal(Literal::Integer(1))),
+                    Box::new(Expression::Literal(Literal::Integer(2))),
                 ))),
-                Box::new(ArithmeticExpression::Literal(Literal::Integer(3))),
+                Box::new(Expression::Literal(Literal::Integer(3))),
             ))),
-            Ok(ArithmeticExpression::Operation(Operation::Multiply(
-                Box::new(ArithmeticExpression::Operation(Operation::Add(
-                    Box::new(ArithmeticExpression::Literal(Literal::Float(1.0))),
-                    Box::new(ArithmeticExpression::Literal(Literal::Integer(2))),
+            Ok(Expression::Operation(Operation::Multiply(
+                Box::new(Expression::Operation(Operation::Add(
+                    Box::new(Expression::Literal(Literal::Float(1.0))),
+                    Box::new(Expression::Literal(Literal::Integer(2))),
                 ))),
-                Box::new(ArithmeticExpression::Literal(Literal::Integer(3))),
+                Box::new(Expression::Literal(Literal::Integer(3))),
             ))),
         ];
         assert_eq!(

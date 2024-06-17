@@ -5,9 +5,9 @@ use nom::combinator::not;
 use nom::error::{context, VerboseError};
 use nom::sequence::{delimited, preceded};
 
-mod arithmetic;
 mod ast;
 mod ddl;
+mod expression;
 mod keyword;
 
 type IResult<I, O> = nom::IResult<I, O, VerboseError<I>>;
