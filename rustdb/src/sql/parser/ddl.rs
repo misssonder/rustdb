@@ -1,4 +1,4 @@
-use crate::sql::parser::arithmetic::{arith_expression, ArithmeticExpression};
+use crate::sql::parser::expression::{expression, Expression};
 use crate::sql::parser::keyword::Keyword;
 use crate::sql::parser::{identifier, IResult};
 use crate::sql::types::DataType;
@@ -25,7 +25,7 @@ pub struct Column {
     pub datatype: DataType,
     pub primary_key: bool,
     pub nullable: Option<bool>,
-    pub default: Option<ArithmeticExpression>,
+    pub default: Option<Expression>,
     pub unique: bool,
     pub index: bool,
     pub references: Option<String>,
@@ -52,7 +52,7 @@ impl std::fmt::Display for Column {
         if self.nullable.unwrap_or_default() {
             write!(f, "NOT NULL ")?;
         }
-        if let Some(ArithmeticExpression::Literal(ref default)) = self.default {
+        if let Some(Expression::Literal(ref default)) = self.default {
             write!(f, "DEFAULT {}", default)?;
         }
         if self.unique {
@@ -131,11 +131,11 @@ fn nullable(i: &str) -> IResult<&str, bool> {
     .map(|(remaining, _)| (remaining, true))
 }
 
-fn default(i: &str) -> IResult<&str, ArithmeticExpression> {
+fn default(i: &str) -> IResult<&str, Expression> {
     tuple((
         tag_no_case(Keyword::Default.to_str()),
         multispace1,
-        arith_expression(0),
+        expression(0),
     ))(i)
     .map(|(remaining, expression)| (remaining, expression.2))
 }
@@ -188,8 +188,8 @@ pub(crate) fn space_close_paren(i: &str) -> IResult<&str, &str> {
 
 #[cfg(test)]
 mod tests {
-    use crate::sql::parser::arithmetic::{ArithmeticExpression, Literal};
     use crate::sql::parser::ddl::{create, Column, CreateTable};
+    use crate::sql::parser::expression::{Expression, Literal};
     use crate::sql::types::DataType;
 
     use nom::Finish;
@@ -205,7 +205,7 @@ mod tests {
                 datatype: DataType::Integer,
                 primary_key: true,
                 nullable: Some(true),
-                default: Some(ArithmeticExpression::Literal(Literal::Integer(1))),
+                default: Some(Expression::Literal(Literal::Integer(1))),
                 unique: true,
                 index: true,
                 references: None,
@@ -266,7 +266,7 @@ mod tests {
                         datatype: DataType::Double,
                         primary_key: false,
                         nullable: Some(true),
-                        default: Some(ArithmeticExpression::Literal(Literal::Float(1.0))),
+                        default: Some(Expression::Literal(Literal::Float(1.0))),
                         unique: false,
                         index: false,
                         references: None,

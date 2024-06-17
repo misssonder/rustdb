@@ -1,5 +1,5 @@
-use crate::sql::parser::arithmetic::ArithmeticExpression;
 use crate::sql::parser::ddl::CreateTable;
+use crate::sql::parser::expression::Expression;
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -20,28 +20,28 @@ pub enum Statement {
 
     Delete {
         table: String,
-        r#where: Option<ArithmeticExpression>,
+        r#where: Option<Expression>,
     },
     Insert {
         table: String,
         columns: Option<Vec<String>>,
-        values: Vec<Vec<ArithmeticExpression>>,
+        values: Vec<Vec<Expression>>,
     },
     Update {
         table: String,
-        set: BTreeMap<String, ArithmeticExpression>,
-        r#where: Option<ArithmeticExpression>,
+        set: BTreeMap<String, Expression>,
+        r#where: Option<Expression>,
     },
 
     Select {
-        select: Vec<(ArithmeticExpression, Option<String>)>,
+        select: Vec<(Expression, Option<String>)>,
         from: Vec<FromItem>,
-        r#where: Option<ArithmeticExpression>,
-        group_by: Vec<ArithmeticExpression>,
-        having: Option<ArithmeticExpression>,
-        order: Vec<(ArithmeticExpression, Order)>,
-        offset: Option<ArithmeticExpression>,
-        limit: Option<ArithmeticExpression>,
+        r#where: Option<Expression>,
+        group_by: Vec<Expression>,
+        having: Option<Expression>,
+        order: Vec<(Expression, Order)>,
+        offset: Option<Expression>,
+        limit: Option<Expression>,
     },
 }
 
@@ -55,7 +55,7 @@ pub enum FromItem {
         left: Box<FromItem>,
         right: Box<FromItem>,
         r#type: JoinType,
-        predicate: Option<ArithmeticExpression>,
+        predicate: Option<Expression>,
     },
 }
 
