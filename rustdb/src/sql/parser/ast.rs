@@ -1,37 +1,21 @@
-use crate::sql::parser::ddl::CreateTable;
+use crate::sql::parser::ddl::{CreateTable, DropTable};
+use crate::sql::parser::dml::{Delete, Insert, Update};
 use crate::sql::parser::expression::Expression;
-use std::collections::BTreeMap;
+use crate::sql::parser::tcl::Begin;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Statement {
-    Begin {
-        read_only: bool,
-        as_of: Option<u64>,
-    },
+    Begin(Begin),
     Commit,
     Rollback,
     Explain(Box<Statement>),
 
     CreateTable(CreateTable),
-    DropTable {
-        name: String,
-        if_exists: bool,
-    },
+    DropTable(DropTable),
 
-    Delete {
-        table: String,
-        r#where: Option<Expression>,
-    },
-    Insert {
-        table: String,
-        columns: Option<Vec<String>>,
-        values: Vec<Vec<Expression>>,
-    },
-    Update {
-        table: String,
-        set: BTreeMap<String, Expression>,
-        r#where: Option<Expression>,
-    },
+    Delete(Delete),
+    Insert(Insert),
+    Update(Update),
 
     Select {
         select: Vec<(Expression, Option<String>)>,

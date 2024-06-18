@@ -348,7 +348,7 @@ fn min_prec_pre_operator(
     min_prec: u8,
 ) -> impl FnMut(&str) -> IResult<&str, Option<PrefixOperator>> {
     move |i| {
-        opt(peek(pre_operator))(i).and_then(|(remaining, operator)| match operator {
+        opt(peek(pre_operator))(i).and_then(|(i, operator)| match operator {
             None => Ok((i, None)),
             Some(operator) => {
                 if operator.prec() >= min_prec {
@@ -365,7 +365,7 @@ fn min_prec_infix_operator(
     min_prec: u8,
 ) -> impl FnMut(&str) -> IResult<&str, Option<InfixOperator>> {
     move |i| {
-        opt(peek(infix_operator))(i).and_then(|(remaining, operator)| match operator {
+        opt(peek(infix_operator))(i).and_then(|(i, operator)| match operator {
             None => Ok((i, None)),
             Some(operator) => {
                 if operator.prec() >= min_prec {
@@ -382,7 +382,7 @@ fn min_prec_post_operator(
     min_prec: u8,
 ) -> impl FnMut(&str) -> IResult<&str, Option<PostfixOperator>> {
     move |i| {
-        opt(peek(post_operator))(i).and_then(|(remaining, operator)| match operator {
+        opt(peek(post_operator))(i).and_then(|(i, operator)| match operator {
             None => Ok((i, None)),
             Some(operator) => {
                 if operator.prec() >= min_prec {

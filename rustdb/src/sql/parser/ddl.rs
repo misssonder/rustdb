@@ -20,6 +20,12 @@ pub struct CreateTable {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct DropTable {
+    name: String,
+    if_exists: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct Column {
     pub name: String,
     pub datatype: DataType,
@@ -81,8 +87,9 @@ pub fn create(i: &str) -> IResult<&str, CreateTable> {
                     separated_list1(space_comma, column),
                     space_close_paren,
                 ),
+                preceded(multispace0, tag(";")),
             )),
-            |(_, _, name, columns)| CreateTable {
+            |(_, _, name, columns, _)| CreateTable {
                 name: name.to_string(),
                 columns,
             },
@@ -118,8 +125,33 @@ fn column(i: &str) -> IResult<&str, Column> {
     )(i)
 }
 
+pub fn drop_table(i: &str) -> IResult<&str, DropTable> {
+    context(
+        "drop table",
+        map(
+            tuple((
+                preceded(
+                    tuple((
+                        preceded(multispace0, tag_no_case(Keyword::Drop.to_str())),
+                        preceded(multispace1, tag_no_case(Keyword::Table.to_str())),
+                    )),
+                    preceded(multispace1, identifier),
+                ),
+                opt(tuple((
+                    preceded(multispace1, tag_no_case(Keyword::If.to_str())),
+                    preceded(multispace1, tag_no_case(Keyword::Exists.to_str())),
+                ))),
+            )),
+            |(name, exists)| DropTable {
+                name: name.to_string(),
+                if_exists: exists.is_some(),
+            },
+        ),
+    )(i)
+}
+
 fn primary_key(i: &str) -> IResult<&str, bool> {
-    tag_no_case(Keyword::Primary.to_str())(i).map(|(remaining, primary)| (remaining, true))
+    tag_no_case(Keyword::Primary.to_str())(i).map(|(remaining, _primary)| (remaining, true))
 }
 
 fn nullable(i: &str) -> IResult<&str, bool> {
@@ -141,7 +173,7 @@ fn default(i: &str) -> IResult<&str, Expression> {
 }
 
 fn unique(i: &str) -> IResult<&str, bool> {
-    tag_no_case(Keyword::Unique.to_str())(i).map(|(remaining, unique)| (remaining, true))
+    tag_no_case(Keyword::Unique.to_str())(i).map(|(remaining, _unique)| (remaining, true))
 }
 
 fn index(i: &str) -> IResult<&str, bool> {
@@ -188,7 +220,7 @@ pub(crate) fn space_close_paren(i: &str) -> IResult<&str, &str> {
 
 #[cfg(test)]
 mod tests {
-    use crate::sql::parser::ddl::{create, Column, CreateTable};
+    use crate::sql::parser::ddl::{create, Column, CreateTable, DropTable};
     use crate::sql::parser::expression::{Expression, Literal};
     use crate::sql::types::DataType;
 
@@ -272,6 +304,17 @@ mod tests {
                         references: None,
                     },
                 ],
+            }
+        )
+    }
+
+    #[test]
+    fn drop_table() {
+        assert_eq!(
+            super::drop_table("DROP TABLE USER IF EXISTS;").unwrap().1,
+            DropTable {
+                name: "USER".to_string(),
+                if_exists: true,
             }
         )
     }
