@@ -1,5 +1,5 @@
 use crate::sql::parser::expression::{expression, Expression};
-use crate::sql::parser::keyword::{Keyword};
+use crate::sql::parser::keyword::Keyword;
 use crate::sql::parser::{identifier, IResult};
 use crate::sql::types::DataType;
 use futures::StreamExt;
@@ -87,9 +87,9 @@ pub fn create(i: &str) -> IResult<&str, CreateTable> {
                     separated_list1(space_comma, column),
                     space_close_paren,
                 ),
-                preceded(multispace0,tag(";"))
+                preceded(multispace0, tag(";")),
             )),
-            |(_, _, name, columns,_)| CreateTable {
+            |(_, _, name, columns, _)| CreateTable {
                 name: name.to_string(),
                 columns,
             },

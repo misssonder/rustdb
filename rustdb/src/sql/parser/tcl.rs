@@ -5,7 +5,7 @@ use nom::bytes::complete::{tag, tag_no_case};
 use nom::character::complete::{multispace0, multispace1};
 use nom::combinator::{map, opt};
 use nom::error::context;
-use nom::sequence::{delimited, preceded, terminated, tuple};
+use nom::sequence::{delimited, preceded, tuple};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Begin {
@@ -18,7 +18,7 @@ fn transaction(i: &str) -> IResult<&str, ast::Statement> {
         delimited(
             multispace0,
             alt((
-                map(begin, |begin| ast::Statement::Begin(begin)),
+                map(begin, ast::Statement::Begin),
                 map(tag_no_case(Keyword::Commit.to_str()), |_| {
                     ast::Statement::Commit
                 }),
