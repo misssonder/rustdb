@@ -29,6 +29,33 @@ pub struct Update {
     r#where: Option<Expression>,
 }
 
+pub fn insert(i: &str) -> IResult<&str, Insert> {
+    context(
+        "insert",
+        terminated(
+            map(
+                tuple((
+                    preceded(
+                        tuple((
+                            preceded(multispace0, tag_no_case(Keyword::Insert.to_str())),
+                            preceded(multispace1, tag_no_case(Keyword::Into.to_str())),
+                        )),
+                        preceded(multispace1, identifier),
+                    ),
+                    opt(columns),
+                    values,
+                )),
+                |(name, columns, values)| Insert {
+                    table: name.to_string(),
+                    columns,
+                    values,
+                },
+            ),
+            preceded(multispace0, tag(";")),
+        ),
+    )(i)
+}
+
 pub fn delete(i: &str) -> IResult<&str, Delete> {
     context(
         "delete",
@@ -78,10 +105,14 @@ pub fn update(i: &str) -> IResult<&str, Update> {
     )(i)
 }
 
+/// Parse 'WHERE some_expression'
 fn r#where(i: &str) -> IResult<&str, Expression> {
-    preceded(
-        tuple((multispace0, tag_no_case(Keyword::Where.to_str()))),
-        expression(0),
+    context(
+        "where",
+        preceded(
+            tuple((multispace0, tag_no_case(Keyword::Where.to_str()))),
+            expression(0),
+        ),
     )(i)
 }
 
@@ -114,10 +145,84 @@ fn key_value(i: &str) -> IResult<&str, (String, Expression)> {
     )(i)
 }
 
+/// Parse `Values (Value1, Value2,Value3,…..), (Value1, Value2,Value3,…..), (Value1, Value2,Value3,…..),`
+fn values(i: &str) -> IResult<&str, Vec<Vec<Expression>>> {
+    context(
+        "values",
+        preceded(
+            tuple((multispace0, tag_no_case(Keyword::Values.to_str()))),
+            separated_list1(delimited(multispace0, tag(","), multispace0), value),
+        ),
+    )(i)
+}
+
+/// Parse `(Value1, Value2,Value3,…..)`
+fn value(i: &str) -> IResult<&str, Vec<Expression>> {
+    context(
+        "value",
+        delimited(
+            delimited(multispace0, tag("("), multispace0),
+            separated_list1(delimited(multispace0, tag(","), multispace0), expression(0)),
+            delimited(multispace0, tag(")"), multispace0),
+        ),
+    )(i)
+}
+
+fn columns(i: &str) -> IResult<&str, Vec<String>> {
+    context(
+        "insert columns",
+        map(
+            delimited(
+                delimited(multispace0, tag("("), multispace0),
+                separated_list1(delimited(multispace0, tag(","), multispace0), identifier),
+                delimited(multispace0, tag(")"), multispace0),
+            ),
+            |column| {
+                column
+                    .into_iter()
+                    .map(|column| column.to_string())
+                    .collect()
+            },
+        ),
+    )(i)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sql::parser::expression::Literal::Float;
     use crate::sql::parser::expression::{Literal, Operation};
+    use std::vec;
+
+    #[test]
+    fn insert() {
+        let sql = "INSERT INTO user (id, name, grade) values( 1, 'John',3.0),(2, 'Mike',3.8) ;";
+        assert_eq!(
+            super::insert(sql).unwrap().1,
+            Insert {
+                table: "user".to_string(),
+                columns: Some(vec![
+                    "id".to_string(),
+                    "name".to_string(),
+                    "grade".to_string()
+                ]),
+                values: vec![
+                    vec![
+                        Expression::Literal(Literal::Integer(1)),
+                        Expression::Literal(Literal::String("John".to_string())),
+                        Expression::Literal(Float(3.0))
+                    ],
+                    vec![
+                        Expression::Literal(Literal::Integer(2)),
+                        Expression::Literal(Literal::String("Mike".to_string())),
+                        Expression::Literal(Float(3.8))
+                    ]
+                ],
+            }
+        );
+        let sql = "INSERT INTO user values( 1, 'John',3.0),(2, 'Mike',3.8) ;";
+        assert!(super::insert(sql).unwrap().1.columns.is_none());
+    }
 
     #[test]
     fn delete() {
