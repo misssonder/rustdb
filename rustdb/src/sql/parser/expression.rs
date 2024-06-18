@@ -2,7 +2,7 @@ use crate::sql::parser::keyword::Keyword;
 use crate::sql::parser::{identifier, IResult};
 use nom::branch::alt;
 use nom::bytes::complete::{tag, tag_no_case};
-use nom::character::complete::{alpha1, i64, multispace0};
+use nom::character::complete::{alphanumeric1, i64, multispace0};
 use nom::combinator::{map, not, opt, peek};
 use nom::error::context;
 use nom::number::complete::double;
@@ -280,7 +280,7 @@ fn literal(i: &str) -> IResult<&str, Literal> {
                 |(integer, _)| Literal::Integer(integer),
             ),
             map(double, Literal::Float),
-            map(delimited(tag("'"), alpha1, tag("'")), |s: &str| {
+            map(delimited(tag("'"), alphanumeric1, tag("'")), |s: &str| {
                 Literal::String(s.to_string())
             }),
             map(tag_no_case(Keyword::Null.to_str()), |_| Literal::Null),
@@ -300,8 +300,8 @@ fn pre_operator(i: &str) -> IResult<&str, PrefixOperator> {
         preceded(
             multispace0,
             alt((
-                map(tag_no_case("-"), |_| PrefixOperator::Minus),
                 map(tag_no_case(Keyword::Not.to_str()), |_| PrefixOperator::Not),
+                map(tag_no_case("-"), |_| PrefixOperator::Minus),
                 map(tag_no_case("+"), |_| PrefixOperator::Plus),
             )),
         ),
@@ -314,20 +314,20 @@ fn infix_operator(i: &str) -> IResult<&str, InfixOperator> {
         preceded(
             multispace0,
             alt((
-                map(tag_no_case("+"), |_| InfixOperator::Add),
+                map(tag_no_case(Keyword::Like.to_str()), |_| InfixOperator::Like),
                 map(tag_no_case(Keyword::And.to_str()), |_| InfixOperator::And),
+                map(tag_no_case(Keyword::Or.to_str()), |_| InfixOperator::Or),
+                map(tag_no_case(">="), |_| InfixOperator::GreaterThanOrEqual),
+                map(tag_no_case("<"), |_| InfixOperator::LessThan),
+                map(tag_no_case("<="), |_| InfixOperator::LessThanOrEqual),
+                map(tag_no_case("!="), |_| InfixOperator::NotEqual),
+                map(tag_no_case("+"), |_| InfixOperator::Add),
                 map(tag_no_case("/"), |_| InfixOperator::Divide),
                 map(tag_no_case("="), |_| InfixOperator::Equal),
                 map(tag_no_case("^"), |_| InfixOperator::Exponentiate),
                 map(tag_no_case(">"), |_| InfixOperator::GreaterThan),
-                map(tag_no_case(">="), |_| InfixOperator::GreaterThanOrEqual),
-                map(tag_no_case("<"), |_| InfixOperator::LessThan),
-                map(tag_no_case("<="), |_| InfixOperator::LessThanOrEqual),
-                map(tag_no_case(Keyword::Like.to_str()), |_| InfixOperator::Like),
                 map(tag_no_case("%"), |_| InfixOperator::Modulo),
                 map(tag_no_case("*"), |_| InfixOperator::Multiply),
-                map(tag_no_case("!="), |_| InfixOperator::NotEqual),
-                map(tag_no_case(Keyword::Or.to_str()), |_| InfixOperator::Or),
                 map(tag_no_case("-"), |_| InfixOperator::Subtract),
             )),
         ),

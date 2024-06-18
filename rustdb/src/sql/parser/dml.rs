@@ -106,7 +106,7 @@ pub fn update(i: &str) -> IResult<&str, Update> {
 }
 
 /// Parse 'WHERE some_expression'
-fn r#where(i: &str) -> IResult<&str, Expression> {
+pub fn r#where(i: &str) -> IResult<&str, Expression> {
     context(
         "where",
         preceded(

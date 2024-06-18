@@ -10,6 +10,7 @@ use nom::sequence::{delimited, preceded, tuple};
 mod ast;
 mod ddl;
 mod dml;
+mod dql;
 mod expression;
 mod keyword;
 mod tcl;
