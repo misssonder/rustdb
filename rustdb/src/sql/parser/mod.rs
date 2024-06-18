@@ -11,6 +11,7 @@ mod ast;
 mod ddl;
 mod expression;
 mod keyword;
+mod tcl;
 
 type IResult<I, O> = nom::IResult<I, O, VerboseError<I>>;
 

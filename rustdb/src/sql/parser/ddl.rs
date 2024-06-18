@@ -87,8 +87,9 @@ pub fn create(i: &str) -> IResult<&str, CreateTable> {
                     separated_list1(space_comma, column),
                     space_close_paren,
                 ),
+                preceded(multispace0,tag(";"))
             )),
-            |(_, _, name, columns)| CreateTable {
+            |(_, _, name, columns,_)| CreateTable {
                 name: name.to_string(),
                 columns,
             },
@@ -310,7 +311,7 @@ mod tests {
     #[test]
     fn drop_table() {
         assert_eq!(
-            super::drop_table("DROP TABLE USER IF EXISTS").unwrap().1,
+            super::drop_table("DROP TABLE USER IF EXISTS;").unwrap().1,
             DropTable {
                 name: "USER".to_string(),
                 if_exists: true,

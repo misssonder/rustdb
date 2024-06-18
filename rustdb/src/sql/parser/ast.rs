@@ -1,13 +1,11 @@
 use crate::sql::parser::ddl::{CreateTable, DropTable};
 use crate::sql::parser::expression::Expression;
+use crate::sql::parser::tcl::Begin;
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Statement {
-    Begin {
-        read_only: bool,
-        as_of: Option<u64>,
-    },
+    Begin(Begin),
     Commit,
     Rollback,
     Explain(Box<Statement>),
