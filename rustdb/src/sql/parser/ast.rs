@@ -1,7 +1,7 @@
 use crate::sql::parser::ddl::{CreateTable, DropTable};
+use crate::sql::parser::dml::{Delete, Insert, Update};
 use crate::sql::parser::expression::Expression;
 use crate::sql::parser::tcl::Begin;
-use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Statement {
@@ -13,20 +13,9 @@ pub enum Statement {
     CreateTable(CreateTable),
     DropTable(DropTable),
 
-    Delete {
-        table: String,
-        r#where: Option<Expression>,
-    },
-    Insert {
-        table: String,
-        columns: Option<Vec<String>>,
-        values: Vec<Vec<Expression>>,
-    },
-    Update {
-        table: String,
-        set: BTreeMap<String, Expression>,
-        r#where: Option<Expression>,
-    },
+    Delete(Delete),
+    Insert(Insert),
+    Update(Update),
 
     Select {
         select: Vec<(Expression, Option<String>)>,

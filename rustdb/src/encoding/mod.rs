@@ -197,7 +197,7 @@ impl Decoder for String {
         for _ in 0..len {
             bytes.push(u8::decode(buf)?)
         }
-        String::from_utf8(bytes).map_err(|err| Error::Decode("Can't read bytes in utf-8".into()))
+        String::from_utf8(bytes).map_err(|_err| Error::Decode("Can't read bytes in utf-8".into()))
     }
 }
 

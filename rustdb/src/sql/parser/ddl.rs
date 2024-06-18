@@ -151,7 +151,7 @@ pub fn drop_table(i: &str) -> IResult<&str, DropTable> {
 }
 
 fn primary_key(i: &str) -> IResult<&str, bool> {
-    tag_no_case(Keyword::Primary.to_str())(i).map(|(remaining, primary)| (remaining, true))
+    tag_no_case(Keyword::Primary.to_str())(i).map(|(remaining, _primary)| (remaining, true))
 }
 
 fn nullable(i: &str) -> IResult<&str, bool> {
@@ -173,7 +173,7 @@ fn default(i: &str) -> IResult<&str, Expression> {
 }
 
 fn unique(i: &str) -> IResult<&str, bool> {
-    tag_no_case(Keyword::Unique.to_str())(i).map(|(remaining, unique)| (remaining, true))
+    tag_no_case(Keyword::Unique.to_str())(i).map(|(remaining, _unique)| (remaining, true))
 }
 
 fn index(i: &str) -> IResult<&str, bool> {
