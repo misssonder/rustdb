@@ -9,10 +9,10 @@ use nom::sequence::{delimited, preceded, tuple};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Begin {
-    name: Option<String>,
-    read_only: bool,
+    pub name: Option<String>,
+    pub read_only: bool,
 }
-fn transaction(i: &str) -> IResult<&str, ast::Statement> {
+pub fn transaction(i: &str) -> IResult<&str, ast::Statement> {
     context(
         "transaction",
         delimited(
