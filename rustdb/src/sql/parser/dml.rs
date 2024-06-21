@@ -11,15 +11,15 @@ use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Delete {
-    table: String,
-    r#where: Option<Expression>,
+    pub table: String,
+    pub r#where: Option<Expression>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Insert {
-    table: String,
-    columns: Option<Vec<String>>,
-    values: Vec<Vec<Expression>>,
+    pub table: String,
+    pub columns: Option<Vec<String>>,
+    pub values: Vec<Vec<Expression>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -106,7 +106,7 @@ pub fn update(i: &str) -> IResult<&str, Update> {
 }
 
 /// Parse 'WHERE some_expression'
-fn r#where(i: &str) -> IResult<&str, Expression> {
+pub fn r#where(i: &str) -> IResult<&str, Expression> {
     context(
         "where",
         preceded(

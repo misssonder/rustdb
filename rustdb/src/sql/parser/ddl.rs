@@ -21,8 +21,8 @@ pub struct CreateTable {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct DropTable {
-    name: String,
-    if_exists: bool,
+    pub name: String,
+    pub if_exists: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
