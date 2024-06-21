@@ -1,9 +1,9 @@
 use crate::sql::parser::expression::{expression, Expression};
 use crate::sql::parser::keyword::Keyword;
-use crate::sql::parser::{identifier, IResult};
+use crate::sql::parser::{ast, identifier, IResult};
 use nom::bytes::complete::{tag, tag_no_case};
 use nom::character::complete::{multispace0, multispace1};
-use nom::combinator::{map, opt};
+use nom::combinator::{map, not, opt, peek};
 use nom::error::context;
 use nom::multi::separated_list1;
 use nom::sequence::{delimited, preceded, separated_pair, terminated, tuple};
@@ -101,6 +101,29 @@ pub fn update(i: &str) -> IResult<&str, Update> {
                 },
             ),
             preceded(multispace0, tag(";")),
+        ),
+    )(i)
+}
+
+pub fn explain(i: &str) -> IResult<&str, ast::Statement> {
+    context(
+        "explain",
+        preceded(
+            tuple((multispace0, tag_no_case(Keyword::Explain.to_str()))),
+            map(
+                preceded(
+                    multispace1,
+                    tuple((
+                        /// Can't explain `Explain` statement
+                        not(peek(preceded(
+                            multispace0,
+                            tag_no_case(Keyword::Explain.to_str()),
+                        ))),
+                        super::statement,
+                    )),
+                ),
+                |(_, statement)| ast::Statement::Explain(Box::new(statement)),
+            ),
         ),
     )(i)
 }

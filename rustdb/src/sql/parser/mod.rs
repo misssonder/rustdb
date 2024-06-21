@@ -31,11 +31,12 @@ pub fn parse(sql: &str) -> Result<ast::Statement, Error> {
         Err(err) => Err(Error::Parse(convert_error(sql, err))),
     }
 }
-fn statement(i: &str) -> IResult<&str, ast::Statement> {
+pub fn statement(i: &str) -> IResult<&str, ast::Statement> {
     context(
         "parse sql statement",
         alt((
             tcl::transaction,
+            dml::explain,
             map(ddl::create, |create_table| {
                 ast::Statement::CreateTable(create_table)
             }),
