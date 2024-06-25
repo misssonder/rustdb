@@ -2,11 +2,11 @@ use crate::sql::parser::keyword::Keyword;
 use crate::sql::parser::{identifier, IResult};
 use nom::branch::alt;
 use nom::bytes::complete::{tag, tag_no_case};
-use nom::character::complete::{alphanumeric1, i64, multispace0};
+use nom::character::complete::{alphanumeric1, i64, multispace0, multispace1};
 use nom::combinator::{map, not, opt, peek};
 use nom::error::context;
 use nom::number::complete::double;
-use nom::sequence::{delimited, preceded, tuple};
+use nom::sequence::{delimited, preceded, terminated, tuple};
 use nom::Parser;
 use std::fmt::{Debug, Formatter};
 
@@ -300,7 +300,10 @@ fn pre_operator(i: &str) -> IResult<&str, PrefixOperator> {
         preceded(
             multispace0,
             alt((
-                map(tag_no_case(Keyword::Not.to_str()), |_| PrefixOperator::Not),
+                map(
+                    terminated(tag_no_case(Keyword::Not.to_str()), multispace1),
+                    |_| PrefixOperator::Not,
+                ),
                 map(tag_no_case("-"), |_| PrefixOperator::Minus),
                 map(tag_no_case("+"), |_| PrefixOperator::Plus),
             )),
@@ -314,9 +317,18 @@ fn infix_operator(i: &str) -> IResult<&str, InfixOperator> {
         preceded(
             multispace0,
             alt((
-                map(tag_no_case(Keyword::Like.to_str()), |_| InfixOperator::Like),
-                map(tag_no_case(Keyword::And.to_str()), |_| InfixOperator::And),
-                map(tag_no_case(Keyword::Or.to_str()), |_| InfixOperator::Or),
+                map(
+                    terminated(tag_no_case(Keyword::Like.to_str()), multispace1),
+                    |_| InfixOperator::Like,
+                ),
+                map(
+                    terminated(tag_no_case(Keyword::And.to_str()), multispace1),
+                    |_| InfixOperator::And,
+                ),
+                map(
+                    terminated(tag_no_case(Keyword::Or.to_str()), multispace1),
+                    |_| InfixOperator::Or,
+                ),
                 map(tag_no_case(">="), |_| InfixOperator::GreaterThanOrEqual),
                 map(tag_no_case("<"), |_| InfixOperator::LessThan),
                 map(tag_no_case("<="), |_| InfixOperator::LessThanOrEqual),
