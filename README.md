@@ -1,14 +1,6 @@
 # rustdb
-RustDB is the rust implementation of [bustub](https://github.com/cmu-db/bustub), which is still in the experimental stage
+Totally async, pure rust implement database based on B+Tree for learning. Refer to [bustub](https://github.com/cmu-db/bustub), [toydb](https://github.com/erikgrinaker/toydb). Which is still in the experimental stage.
 ## roadmap
-- [x] Buffer Poll
-  - [x] Evict Policy 
-  - [x] Page lifetime manage 
-- [X] BPlus Tree
-  - [x] Search
-  - [x] Insert
-  - [x] Delete
-  - [X] Concurrency
 - [x] Parsing
   - [x] Begin
   - [x] Commit
@@ -20,3 +12,14 @@ RustDB is the rust implementation of [bustub](https://github.com/cmu-db/bustub),
   - [x] Update
   - [x] Select
   - [x] Explain
+- [ ] Planner
+- [ ] Executor
+- [ ] Transaction
+- [X] BPlus Tree
+  - [x] Search
+  - [x] Insert
+  - [x] Delete
+  - [X] Concurrency
+- [x] Buffer Poll
+  - [x] Evict Policy 
+  - [x] Page lifetime manage 
