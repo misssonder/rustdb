@@ -9,13 +9,13 @@ use nom::sequence::{delimited, preceded, tuple};
 use nom::Finish;
 use thiserror::Error;
 
-mod ast;
-mod ddl;
-mod dml;
-mod dql;
-mod expression;
+pub mod ast;
+pub mod ddl;
+pub mod dml;
+pub mod dql;
+pub mod expression;
 mod keyword;
-mod tcl;
+pub mod tcl;
 
 type IResult<I, O> = nom::IResult<I, O, VerboseError<I>>;
 
