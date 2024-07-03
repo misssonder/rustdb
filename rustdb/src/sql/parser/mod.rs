@@ -1,5 +1,4 @@
 use crate::sql::parser::keyword::keyword;
-use futures::StreamExt;
 use nom::branch::alt;
 use nom::bytes::complete::{tag, take_while1};
 use nom::character::complete::alpha1;

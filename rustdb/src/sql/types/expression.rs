@@ -1,4 +1,3 @@
-use crate::error::{RustDBError, RustDBResult};
 use crate::sql::types::Value;
 use crate::sql::{Error, SqlResult};
 use ordered_float::OrderedFloat;

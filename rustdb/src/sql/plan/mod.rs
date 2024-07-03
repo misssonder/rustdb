@@ -3,7 +3,7 @@ use ordered_float::OrderedFloat;
 use crate::sql::types::Value;
 
 use super::{
-    parser::{self, ast},
+    parser::{self},
     types::expression,
     SqlResult,
 };

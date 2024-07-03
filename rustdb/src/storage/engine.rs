@@ -6,7 +6,7 @@ use crate::storage::page::table::{Tuple, Tuples};
 use crate::storage::table::Table;
 use crate::storage::{Error, PageId, Storage, StorageResult};
 use async_stream::try_stream;
-use futures::{Stream, StreamExt};
+use futures::{Stream};
 use std::collections::BTreeMap;
 use std::ops::RangeBounds;
 use std::sync::Arc;
@@ -177,6 +177,7 @@ mod tests {
     use super::*;
     use crate::sql::types::DataType;
     use crate::storage::disk::disk_manager::DiskManager;
+    use futures::stream::StreamExt;
 
     async fn new_engine() -> StorageResult<Engine> {
         let f = tempfile::NamedTempFile::new()?;
