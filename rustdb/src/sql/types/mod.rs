@@ -125,7 +125,12 @@ impl Value {
     pub fn check_zero(&self) -> bool {
         matches!(
             self,
-            Value::Tinyint(0) | Value::Smallint(0) | Value::Integer(0) | Value::Bigint(0)
+            Value::Tinyint(0)
+                | Value::Smallint(0)
+                | Value::Integer(0)
+                | Value::Bigint(0)
+                | Value::Float(OrderedFloat(0.0))
+                | Value::Double(OrderedFloat(0.0))
         )
     }
 }
