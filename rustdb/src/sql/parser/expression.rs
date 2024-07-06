@@ -7,7 +7,6 @@ use nom::combinator::{map, not, opt, peek};
 use nom::error::context;
 use nom::number::complete::double;
 use nom::sequence::{delimited, preceded, terminated, tuple};
-use nom::Parser;
 use std::fmt::{Debug, Formatter};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -24,6 +23,7 @@ impl Default for Expression {
     }
 }
 
+//TODO add mutiple int
 #[derive(Default, Clone, Debug, PartialEq)]
 pub enum Literal {
     #[default]
@@ -216,6 +216,7 @@ impl Operator for PostfixOperator {
 }
 
 /// Ugly implement precedence climbing
+#[allow(unused_assignments)]
 pub fn expression(prec_min: u8) -> impl FnMut(&str) -> IResult<&str, Expression> {
     move |i| {
         let (i, prefix) = min_prec_pre_operator(prec_min)(i)?;

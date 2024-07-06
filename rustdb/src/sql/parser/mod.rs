@@ -1,5 +1,4 @@
 use crate::sql::parser::keyword::keyword;
-use futures::StreamExt;
 use nom::branch::alt;
 use nom::bytes::complete::{tag, take_while1};
 use nom::character::complete::alpha1;
@@ -9,13 +8,13 @@ use nom::sequence::{delimited, preceded, tuple};
 use nom::Finish;
 use thiserror::Error;
 
-mod ast;
-mod ddl;
-mod dml;
-mod dql;
-mod expression;
+pub mod ast;
+pub mod ddl;
+pub mod dml;
+pub mod dql;
+pub mod expression;
 mod keyword;
-mod tcl;
+pub mod tcl;
 
 type IResult<I, O> = nom::IResult<I, O, VerboseError<I>>;
 

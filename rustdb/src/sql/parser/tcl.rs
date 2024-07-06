@@ -62,10 +62,7 @@ fn readonly(i: &str) -> IResult<&str, bool> {
                     )),
                 ),
             ))),
-            |readonly| match readonly {
-                None => false,
-                Some((_, readonly)) => readonly,
-            },
+            |readonly| readonly.map(|(_, readonly)| readonly).unwrap_or_default(),
         ),
     )(i)
 }

@@ -2,7 +2,6 @@ use crate::sql::parser::expression::{expression, Expression};
 use crate::sql::parser::keyword::Keyword;
 use crate::sql::parser::{identifier, IResult};
 use crate::sql::types::DataType;
-use futures::StreamExt;
 use nom::branch::alt;
 use nom::bytes::complete::{tag, tag_no_case};
 use nom::character::complete::{multispace0, multispace1};
@@ -10,7 +9,6 @@ use nom::combinator::{map, opt};
 use nom::error::context;
 use nom::multi::separated_list1;
 use nom::sequence::{delimited, preceded, tuple};
-use nom::Parser;
 use std::fmt::{Debug, Formatter};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -177,7 +175,7 @@ fn unique(i: &str) -> IResult<&str, bool> {
 }
 
 fn index(i: &str) -> IResult<&str, bool> {
-    tag_no_case(Keyword::Index.to_str())(i).map(|(remaining, index)| (remaining, true))
+    tag_no_case(Keyword::Index.to_str())(i).map(|(remaining, _index)| (remaining, true))
 }
 
 fn references(i: &str) -> IResult<&str, String> {

@@ -114,7 +114,7 @@ pub fn explain(i: &str) -> IResult<&str, ast::Statement> {
                 preceded(
                     multispace1,
                     tuple((
-                        /// Can't explain `Explain` statement
+                        // Can't explain `Explain` statement
                         not(peek(preceded(
                             multispace0,
                             tag_no_case(Keyword::Explain.to_str()),
