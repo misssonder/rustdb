@@ -1,6 +1,9 @@
-use ordered_float::OrderedFloat;
-
+use crate::sql::catalog::{Column, Table};
+use crate::sql::parser::ast;
+use crate::sql::parser::ddl::CreateTable;
+use crate::sql::plan::node::Node;
 use crate::sql::types::Value;
+use ordered_float::OrderedFloat;
 
 use super::{
     parser::{self},
@@ -15,6 +18,37 @@ pub struct Planner {}
 impl Planner {
     pub fn new() -> Self {
         Self {}
+    }
+
+    pub fn build_statement(&self, statement: ast::Statement) -> SqlResult<Node> {
+        match statement {
+            ast::Statement::CreateTable(CreateTable { name, columns }) => Ok(Node::CreateTable {
+                schema: Table::new(
+                    name,
+                    columns
+                        .into_iter()
+                        .map(|c| {
+                            let mut column = Column::new(c.name, c.datatype)
+                                .with_primary(c.primary_key)
+                                .with_unique(c.unique)
+                                .with_index(c.index);
+                            if let Some(nullable) = c.nullable {
+                                column = column.with_nullable(nullable);
+                            }
+                            if let Some(default) = c.default {
+                                column = column
+                                    .with_default(self.build_expression(default)?.evaluate()?);
+                            }
+                            if let Some(references) = c.references {
+                                column = column.with_references(references)
+                            }
+                            Ok(column)
+                        })
+                        .collect::<SqlResult<_>>()?,
+                ),
+            }),
+            _ => unimplemented!(),
+        }
     }
 
     pub fn build_expression(
@@ -44,13 +78,47 @@ impl Planner {
                     Box::new(self.build_expression(*lhs)?),
                     Box::new(self.build_expression(*rhs)?),
                 ),
-                parser::expression::Operation::Equal(_, _) => todo!(),
-                parser::expression::Operation::GreaterThan(_, _) => todo!(),
-                parser::expression::Operation::GreaterThanOrEqual(_, _) => todo!(),
-                parser::expression::Operation::IsNull(_) => todo!(),
-                parser::expression::Operation::LessThan(_, _) => todo!(),
-                parser::expression::Operation::LessThanOrEqual(_, _) => todo!(),
-                parser::expression::Operation::NotEqual(_, _) => todo!(),
+                parser::expression::Operation::Equal(lhs, rhs) => Expression::Equal(
+                    Box::new(self.build_expression(*lhs)?),
+                    Box::new(self.build_expression(*rhs)?),
+                ),
+                parser::expression::Operation::GreaterThan(lhs, rhs) => Expression::GreaterThan(
+                    Box::new(self.build_expression(*lhs)?),
+                    Box::new(self.build_expression(*rhs)?),
+                ),
+                parser::expression::Operation::GreaterThanOrEqual(lhs, rhs) => Expression::Or(
+                    Box::new(Expression::Equal(
+                        Box::new(self.build_expression(*lhs.clone())?),
+                        Box::new(self.build_expression(*rhs.clone())?),
+                    )),
+                    Box::new(Expression::GreaterThan(
+                        Box::new(self.build_expression(*lhs)?),
+                        Box::new(self.build_expression(*rhs)?),
+                    )),
+                ),
+                parser::expression::Operation::IsNull(expr) => {
+                    Expression::IsNull(Box::new(self.build_expression(*expr)?))
+                }
+                parser::expression::Operation::LessThan(lhs, rhs) => Expression::LessThan(
+                    Box::new(self.build_expression(*lhs)?),
+                    Box::new(self.build_expression(*rhs)?),
+                ),
+                parser::expression::Operation::LessThanOrEqual(lhs, rhs) => Expression::Or(
+                    Box::new(Expression::Equal(
+                        Box::new(self.build_expression(*lhs.clone())?),
+                        Box::new(self.build_expression(*rhs.clone())?),
+                    )),
+                    Box::new(Expression::LessThan(
+                        Box::new(self.build_expression(*lhs)?),
+                        Box::new(self.build_expression(*rhs)?),
+                    )),
+                ),
+                parser::expression::Operation::NotEqual(lhs, rhs) => {
+                    Expression::Not(Box::new(Expression::Equal(
+                        Box::new(self.build_expression(*lhs)?),
+                        Box::new(self.build_expression(*rhs)?),
+                    )))
+                }
                 parser::expression::Operation::Add(lhs, rhs) => Expression::Add(
                     Box::new(self.build_expression(*lhs)?),
                     Box::new(self.build_expression(*rhs)?),
@@ -75,7 +143,10 @@ impl Planner {
                     Box::new(self.build_expression(*lhs)?),
                     Box::new(self.build_expression(*rhs)?),
                 ),
-                parser::expression::Operation::Like(_, _) => todo!(),
+                parser::expression::Operation::Like(lhs, rhs) => Expression::Like(
+                    Box::new(self.build_expression(*lhs)?),
+                    Box::new(self.build_expression(*rhs)?),
+                ),
             },
         })
     }
