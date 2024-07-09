@@ -5,7 +5,7 @@ use super::{
 };
 use crate::sql::catalog::{Column, Table};
 use crate::sql::parser::ast;
-use crate::sql::parser::ddl::CreateTable;
+use crate::sql::parser::ddl::{CreateTable, DropTable};
 use crate::sql::plan::node::Node;
 use crate::sql::types::Value;
 use ordered_float::OrderedFloat;
@@ -45,6 +45,10 @@ impl Planner {
                         })
                         .collect::<SqlResult<_>>()?,
                 ),
+            }),
+            ast::Statement::DropTable(DropTable { name, if_exists }) => Ok(Node::DropTable {
+                table: name,
+                if_exists,
             }),
             _ => unimplemented!(),
         }
