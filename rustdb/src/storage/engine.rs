@@ -6,7 +6,7 @@ use crate::storage::page::table::{Tuple, Tuples};
 use crate::storage::table::Table;
 use crate::storage::{Error, PageId, Storage, StorageResult};
 use async_stream::try_stream;
-use futures::{Stream};
+use futures::Stream;
 use std::collections::BTreeMap;
 use std::ops::RangeBounds;
 use std::sync::Arc;

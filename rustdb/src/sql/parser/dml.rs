@@ -213,7 +213,7 @@ fn columns(i: &str) -> IResult<&str, Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sql::parser::expression::Literal::Float;
+    use crate::sql::parser::expression::Literal::Double;
     use crate::sql::parser::expression::{Literal, Operation};
     use std::vec;
 
@@ -233,12 +233,12 @@ mod tests {
                     vec![
                         Expression::Literal(Literal::Integer(1)),
                         Expression::Literal(Literal::String("John".to_string())),
-                        Expression::Literal(Float(3.0))
+                        Expression::Literal(Double(3.0))
                     ],
                     vec![
                         Expression::Literal(Literal::Integer(2)),
                         Expression::Literal(Literal::String("Mike".to_string())),
-                        Expression::Literal(Float(3.8))
+                        Expression::Literal(Double(3.8))
                     ]
                 ],
             }
@@ -274,7 +274,7 @@ mod tests {
                         "grade".to_string(),
                         Expression::Operation(Operation::Add(
                             Box::new(Expression::Field(None, "grade".to_string())),
-                            Box::new(Expression::Literal(Literal::Float(1.0))),
+                            Box::new(Expression::Literal(Literal::Double(1.0))),
                         ))
                     ),
                     (

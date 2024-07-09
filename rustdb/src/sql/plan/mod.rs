@@ -1,15 +1,14 @@
+use super::{
+    parser::{self},
+    types::expression,
+    SqlResult,
+};
 use crate::sql::catalog::{Column, Table};
 use crate::sql::parser::ast;
 use crate::sql::parser::ddl::CreateTable;
 use crate::sql::plan::node::Node;
 use crate::sql::types::Value;
 use ordered_float::OrderedFloat;
-
-use super::{
-    parser::{self},
-    types::expression,
-    SqlResult,
-};
 
 mod node;
 
@@ -60,8 +59,12 @@ impl Planner {
             parser::expression::Expression::Literal(literal) => Expression::Const(match literal {
                 parser::expression::Literal::Null => Value::Null,
                 parser::expression::Literal::Boolean(boolean) => Value::Boolean(boolean),
+                parser::expression::Literal::Tinyint(integer) => Value::Tinyint(integer),
+                parser::expression::Literal::Smallint(integer) => Value::Smallint(integer),
                 parser::expression::Literal::Integer(integer) => Value::Integer(integer),
-                parser::expression::Literal::Float(float) => Value::Double(OrderedFloat(float)),
+                parser::expression::Literal::Bigint(integer) => Value::Bigint(integer),
+                parser::expression::Literal::Float(float) => Value::Float(OrderedFloat(float)),
+                parser::expression::Literal::Double(float) => Value::Double(OrderedFloat(float)),
                 parser::expression::Literal::String(string) => Value::String(string),
             }),
             parser::expression::Expression::Field(_, _) => todo!(),
@@ -123,7 +126,9 @@ impl Planner {
                     Box::new(self.build_expression(*lhs)?),
                     Box::new(self.build_expression(*rhs)?),
                 ),
-                parser::expression::Operation::Assert(_) => todo!(),
+                parser::expression::Operation::Assert(expr) => {
+                    Expression::Assert(Box::new(self.build_expression(*expr)?))
+                }
                 parser::expression::Operation::Divide(lhs, rhs) => Expression::Divide(
                     Box::new(self.build_expression(*lhs)?),
                     Box::new(self.build_expression(*rhs)?),
@@ -132,13 +137,20 @@ impl Planner {
                     Box::new(self.build_expression(*lhs)?),
                     Box::new(self.build_expression(*rhs)?),
                 ),
-                parser::expression::Operation::Factorial(_) => todo!(),
-                parser::expression::Operation::Modulo(_, _) => todo!(),
+                parser::expression::Operation::Factorial(expr) => {
+                    Expression::Factorial(Box::new(self.build_expression(*expr)?))
+                }
+                parser::expression::Operation::Modulo(lhs, rhs) => Expression::Modulo(
+                    Box::new(self.build_expression(*lhs)?),
+                    Box::new(self.build_expression(*rhs)?),
+                ),
                 parser::expression::Operation::Multiply(lhs, rhs) => Expression::Multiply(
                     Box::new(self.build_expression(*lhs)?),
                     Box::new(self.build_expression(*rhs)?),
                 ),
-                parser::expression::Operation::Negate(_) => todo!(),
+                parser::expression::Operation::Negate(expr) => {
+                    Expression::Negate(Box::new(self.build_expression(*expr)?))
+                }
                 parser::expression::Operation::Subtract(lhs, rhs) => Expression::Subtract(
                     Box::new(self.build_expression(*lhs)?),
                     Box::new(self.build_expression(*rhs)?),

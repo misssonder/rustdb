@@ -29,16 +29,24 @@ pub enum Literal {
     #[default]
     Null,
     Boolean(bool),
+    Tinyint(i16),
+    Smallint(i32),
     Integer(i64),
-    Float(f64),
+    Bigint(i128),
+    Float(f32),
+    Double(f64),
     String(String),
 }
 
 impl std::fmt::Display for Literal {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
+            Literal::Tinyint(i) => write!(f, "{}", i),
+            Literal::Smallint(i) => write!(f, "{}", i),
             Literal::Integer(i) => write!(f, "{}", i),
+            Literal::Bigint(i) => write!(f, "{}", i),
             Literal::Float(float) => write!(f, "{}", float),
+            Literal::Double(float) => write!(f, "{}", float),
             Literal::String(s) => write!(f, "{}", s),
             Literal::Null => write!(f, "NULL"),
             Literal::Boolean(bool) => write!(f, "{}", bool),
@@ -280,7 +288,7 @@ fn literal(i: &str) -> IResult<&str, Literal> {
                 tuple((i64, not(alt((tag("."), tag_no_case("e")))))),
                 |(integer, _)| Literal::Integer(integer),
             ),
-            map(double, Literal::Float),
+            map(double, Literal::Double),
             map(delimited(tag("'"), alphanumeric1, tag("'")), |s: &str| {
                 Literal::String(s.to_string())
             }),
@@ -416,7 +424,7 @@ mod tests {
     }
     #[test]
     fn literal() {
-        assert_eq!(super::literal("1.0").unwrap().1, Literal::Float(1.0));
+        assert_eq!(super::literal("1.0").unwrap().1, Literal::Double(1.0));
         assert_eq!(super::literal("1").unwrap().1, Literal::Integer(1));
     }
     #[test]
@@ -439,7 +447,7 @@ mod tests {
             ))),
             Ok(Expression::Operation(Operation::Multiply(
                 Box::new(Expression::Operation(Operation::Add(
-                    Box::new(Expression::Literal(Literal::Float(1.0))),
+                    Box::new(Expression::Literal(Literal::Double(1.0))),
                     Box::new(Expression::Literal(Literal::Integer(2))),
                 ))),
                 Box::new(Expression::Literal(Literal::Integer(3))),

@@ -17,6 +17,7 @@ pub enum Expression {
     LessThan(Box<Expression>, Box<Expression>),
 
     Add(Box<Expression>, Box<Expression>),
+    Assert(Box<Expression>),
     Factorial(Box<Expression>),
     Modulo(Box<Expression>, Box<Expression>),
     Subtract(Box<Expression>, Box<Expression>),
@@ -304,6 +305,16 @@ impl Expression {
                         rhs.to_string(),
                     ))
                 }
+            }),
+            Expression::Assert(expr) => Ok(match expr.evaluate()? {
+                Value::Null => Value::Null,
+                Value::Tinyint(expr) => Value::Tinyint(expr),
+                Value::Smallint(expr) => Value::Smallint(expr),
+                Value::Integer(expr) => Value::Integer(expr),
+                Value::Bigint(expr) => Value::Bigint(expr),
+                Value::Float(expr) => Value::Float(expr),
+                Value::Double(expr) => Value::Double(expr),
+                expr => return Err(Error::ValueNotMatch("assert", expr.to_string())),
             }),
             Expression::Factorial(expr) => Ok(match expr.evaluate()? {
                 Value::Null => Value::Null,

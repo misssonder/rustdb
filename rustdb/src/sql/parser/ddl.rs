@@ -296,7 +296,7 @@ mod tests {
                         datatype: DataType::Double,
                         primary_key: false,
                         nullable: Some(true),
-                        default: Some(Expression::Literal(Literal::Float(1.0))),
+                        default: Some(Expression::Literal(Literal::Double(1.0))),
                         unique: false,
                         index: false,
                         references: None,
