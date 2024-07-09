@@ -17,10 +17,13 @@ pub enum Expression {
     LessThan(Box<Expression>, Box<Expression>),
 
     Add(Box<Expression>, Box<Expression>),
+    Factorial(Box<Expression>),
+    Modulo(Box<Expression>, Box<Expression>),
     Subtract(Box<Expression>, Box<Expression>),
     Multiply(Box<Expression>, Box<Expression>),
     Divide(Box<Expression>, Box<Expression>),
     Exponentiate(Box<Expression>, Box<Expression>),
+    Negate(Box<Expression>),
 
     Like(Box<Expression>, Box<Expression>),
 }
@@ -297,6 +300,116 @@ impl Expression {
                 (lhs, rhs) => {
                     return Err(Error::ValuesNotMatch(
                         "add",
+                        lhs.to_string(),
+                        rhs.to_string(),
+                    ))
+                }
+            }),
+            Expression::Factorial(expr) => Ok(match expr.evaluate()? {
+                Value::Null => Value::Null,
+                Value::Tinyint(expr) if expr < 0 => {
+                    return Err(Error::ValueNotMatch("factorial", expr.to_string()))
+                }
+                Value::Smallint(expr) if expr < 0 => {
+                    return Err(Error::ValueNotMatch("factorial", expr.to_string()))
+                }
+                Value::Integer(expr) if expr < 0 => {
+                    return Err(Error::ValueNotMatch("factorial", expr.to_string()))
+                }
+                Value::Bigint(expr) if expr < 0 => {
+                    return Err(Error::ValueNotMatch("factorial", expr.to_string()))
+                }
+                Value::Tinyint(expr) => Value::Tinyint((1..expr).product()),
+                Value::Smallint(expr) => Value::Smallint((1..expr).product()),
+                Value::Integer(expr) => Value::Integer((1..expr).product()),
+                Value::Bigint(expr) => Value::Bigint((1..expr).product()),
+                expr => return Err(Error::ValueNotMatch("factorial", expr.to_string())),
+            }),
+            Expression::Modulo(lhs, rhs) => Ok(match (lhs.evaluate()?, rhs.evaluate()?) {
+                // check zero
+                (lhs, rhs) if (lhs.check_int() || lhs.check_float()) && rhs.check_zero() => {
+                    return Err(Error::ValuesNotMatch(
+                        "modulo",
+                        lhs.to_string(),
+                        rhs.to_string(),
+                    ))
+                }
+                (Value::Null, Value::Null) => Value::Null,
+                (Value::Tinyint(lhs), Value::Tinyint(rhs)) => Value::Tinyint(lhs % rhs),
+                (Value::Tinyint(lhs), Value::Smallint(rhs)) => Value::Smallint(lhs as i32 % rhs),
+                (Value::Tinyint(lhs), Value::Integer(rhs)) => Value::Integer((lhs as i64) % rhs),
+                (Value::Tinyint(lhs), Value::Bigint(rhs)) => Value::Bigint((lhs as i128) % rhs),
+                (Value::Tinyint(lhs), Value::Float(OrderedFloat(rhs))) => {
+                    Value::Float(OrderedFloat(lhs as f32 % rhs))
+                }
+                (Value::Tinyint(lhs), Value::Double(OrderedFloat(rhs))) => {
+                    Value::Double(OrderedFloat(lhs as f64 % rhs))
+                }
+                (Value::Smallint(lhs), Value::Tinyint(rhs)) => Value::Smallint(lhs % (rhs as i32)),
+                (Value::Smallint(lhs), Value::Smallint(rhs)) => Value::Smallint(lhs % rhs),
+                (Value::Smallint(lhs), Value::Integer(rhs)) => Value::Integer((lhs as i64) % rhs),
+                (Value::Smallint(lhs), Value::Bigint(rhs)) => Value::Bigint((lhs as i128) % rhs),
+                (Value::Smallint(lhs), Value::Float(rhs)) => {
+                    Value::Float(OrderedFloat(lhs as f32) % rhs)
+                }
+                (Value::Smallint(lhs), Value::Double(rhs)) => {
+                    Value::Double(OrderedFloat(lhs as f64) % rhs)
+                }
+                (Value::Integer(lhs), Value::Tinyint(rhs)) => Value::Integer(lhs % (rhs as i64)),
+                (Value::Integer(lhs), Value::Smallint(rhs)) => Value::Integer(lhs % (rhs as i64)),
+                (Value::Integer(lhs), Value::Integer(rhs)) => Value::Integer(lhs % (rhs)),
+                (Value::Integer(lhs), Value::Bigint(rhs)) => Value::Bigint((lhs as i128) % (rhs)),
+                (Value::Integer(lhs), Value::Float(rhs)) => {
+                    Value::Float(OrderedFloat(lhs as f32) % rhs)
+                }
+                (Value::Integer(lhs), Value::Double(rhs)) => {
+                    Value::Double(OrderedFloat(lhs as f64) % rhs)
+                }
+                (Value::Bigint(lhs), Value::Tinyint(rhs)) => Value::Bigint(lhs % (rhs as i128)),
+                (Value::Bigint(lhs), Value::Smallint(rhs)) => Value::Bigint(lhs % (rhs as i128)),
+                (Value::Bigint(lhs), Value::Integer(rhs)) => Value::Bigint(lhs % (rhs as i128)),
+                (Value::Bigint(lhs), Value::Bigint(rhs)) => Value::Bigint(lhs % rhs),
+                (Value::Bigint(lhs), Value::Float(rhs)) => {
+                    Value::Float(OrderedFloat(lhs as f32) % rhs)
+                }
+                (Value::Bigint(lhs), Value::Double(rhs)) => {
+                    Value::Double(OrderedFloat(lhs as f64) % rhs)
+                }
+                (Value::Float(lhs), Value::Tinyint(rhs)) => {
+                    Value::Float(lhs % OrderedFloat(rhs as f32))
+                }
+                (Value::Float(lhs), Value::Smallint(rhs)) => {
+                    Value::Float(lhs % OrderedFloat(rhs as f32))
+                }
+                (Value::Float(lhs), Value::Integer(rhs)) => {
+                    Value::Float(lhs % OrderedFloat(rhs as f32))
+                }
+                (Value::Float(lhs), Value::Bigint(rhs)) => {
+                    Value::Float(lhs % OrderedFloat(rhs as f32))
+                }
+                (Value::Float(lhs), Value::Float(rhs)) => Value::Float(lhs % rhs),
+                (Value::Float(OrderedFloat(lhs)), Value::Double(rhs)) => {
+                    Value::Double(OrderedFloat(lhs as f64) % rhs)
+                }
+                (Value::Double(lhs), Value::Tinyint(rhs)) => {
+                    Value::Double(lhs % OrderedFloat(rhs as f64))
+                }
+                (Value::Double(lhs), Value::Smallint(rhs)) => {
+                    Value::Double(lhs % OrderedFloat(rhs as f64))
+                }
+                (Value::Double(lhs), Value::Integer(rhs)) => {
+                    Value::Double(lhs % OrderedFloat(rhs as f64))
+                }
+                (Value::Double(lhs), Value::Bigint(rhs)) => {
+                    Value::Double(lhs % OrderedFloat(rhs as f64))
+                }
+                (Value::Double(lhs), Value::Float(OrderedFloat(rhs))) => {
+                    Value::Double(lhs % OrderedFloat(rhs as f64))
+                }
+                (Value::Double(lhs), Value::Double(rhs)) => Value::Double(lhs % rhs),
+                (lhs, rhs) => {
+                    return Err(Error::ValuesNotMatch(
+                        "modulo",
                         lhs.to_string(),
                         rhs.to_string(),
                     ))
@@ -835,6 +948,16 @@ impl Expression {
                         rhs.to_string(),
                     ))
                 }
+            }),
+            Expression::Negate(expr) => Ok(match expr.evaluate()? {
+                Value::Null => Value::Null,
+                Value::Tinyint(expr) => Value::Tinyint(-expr),
+                Value::Smallint(expr) => Value::Smallint(-expr),
+                Value::Integer(expr) => Value::Integer(-expr),
+                Value::Bigint(expr) => Value::Bigint(-expr),
+                Value::Float(expr) => Value::Float(-expr),
+                Value::Double(expr) => Value::Double(-expr),
+                expr => return Err(Error::ValueNotMatch("negate", expr.to_string())),
             }),
             Expression::Like(_, _) => todo!(),
         }

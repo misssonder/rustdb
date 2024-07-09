@@ -17,6 +17,6 @@ pub enum Error {
     ValuesNotMatch(&'static str, String, String),
     #[error("can't {0} {1}")]
     ValueNotMatch(&'static str, String),
-    #[error("{0} {1}")]
+    #[error("can't {0} {1}")]
     OutOfBound(&'static str, &'static str),
 }
