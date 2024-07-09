@@ -213,7 +213,6 @@ fn columns(i: &str) -> IResult<&str, Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sql::parser::expression::Literal::Float;
     use crate::sql::parser::expression::{Literal, Operation};
     use std::vec;
 
@@ -231,14 +230,14 @@ mod tests {
                 ]),
                 values: vec![
                     vec![
-                        Expression::Literal(Literal::Integer(1)),
+                        Expression::Literal(Literal::Tinyint(1)),
                         Expression::Literal(Literal::String("John".to_string())),
-                        Expression::Literal(Float(3.0))
+                        Expression::Literal(Literal::Float(3.0))
                     ],
                     vec![
-                        Expression::Literal(Literal::Integer(2)),
+                        Expression::Literal(Literal::Tinyint(2)),
                         Expression::Literal(Literal::String("Mike".to_string())),
-                        Expression::Literal(Float(3.8))
+                        Expression::Literal(Literal::Float(3.8))
                     ]
                 ],
             }
@@ -256,7 +255,7 @@ mod tests {
                 table: "user".to_string(),
                 r#where: Some(Expression::Operation(Operation::Equal(
                     Box::new(Expression::Field(None, "id".to_string())),
-                    Box::new(Expression::Literal(Literal::Integer(1)))
+                    Box::new(Expression::Literal(Literal::Tinyint(1)))
                 ))),
             }
         )
@@ -284,7 +283,7 @@ mod tests {
                 ]),
                 r#where: Some(Expression::Operation(Operation::Equal(
                     Box::new(Expression::Field(None, "id".to_string())),
-                    Box::new(Expression::Literal(Literal::Integer(2)))
+                    Box::new(Expression::Literal(Literal::Tinyint(2)))
                 ))),
             }
         );

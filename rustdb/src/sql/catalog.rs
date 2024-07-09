@@ -20,6 +20,15 @@ pub struct Table {
     columns: Vec<Column>,
 }
 
+impl Table {
+    pub fn new(name: impl Into<String>, columns: Vec<Column>) -> Self {
+        Self {
+            name: name.into(),
+            columns,
+        }
+    }
+}
+
 /// Logical table.
 /// If you want to check physical column in page, check [`crate::storage::page::column::Column`]
 #[derive(Clone, Debug, PartialEq)]
@@ -40,4 +49,49 @@ pub struct Column {
     pub references: Option<String>,
     /// Whether the column should be indexed
     pub index: bool,
+}
+
+impl Column {
+    pub fn new(name: impl Into<String>, datatype: DataType) -> Self {
+        Self {
+            name: name.into(),
+            datatype,
+            primary_key: false,
+            nullable: false,
+            default: None,
+            unique: false,
+            references: None,
+            index: false,
+        }
+    }
+
+    pub fn with_primary(mut self, primary: bool) -> Self {
+        self.primary_key = primary;
+        self
+    }
+
+    pub fn with_nullable(mut self, nullable: bool) -> Self {
+        self.nullable = nullable;
+        self
+    }
+
+    pub fn with_default(mut self, default: Value) -> Self {
+        self.default = Some(default);
+        self
+    }
+
+    pub fn with_unique(mut self, unique: bool) -> Self {
+        self.unique = unique;
+        self
+    }
+
+    pub fn with_references(mut self, references: String) -> Self {
+        self.references = Some(references);
+        self
+    }
+
+    pub fn with_index(mut self, index: bool) -> Self {
+        self.index = index;
+        self
+    }
 }

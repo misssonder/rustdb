@@ -235,7 +235,7 @@ mod tests {
                 datatype: DataType::Integer,
                 primary_key: true,
                 nullable: Some(true),
-                default: Some(Expression::Literal(Literal::Integer(1))),
+                default: Some(Expression::Literal(Literal::Tinyint(1))),
                 unique: true,
                 index: true,
                 references: None,

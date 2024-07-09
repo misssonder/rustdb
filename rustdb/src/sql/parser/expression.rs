@@ -2,10 +2,10 @@ use crate::sql::parser::keyword::Keyword;
 use crate::sql::parser::{identifier, IResult};
 use nom::branch::alt;
 use nom::bytes::complete::{tag, tag_no_case};
-use nom::character::complete::{alphanumeric1, i64, multispace0, multispace1};
+use nom::character::complete::{alphanumeric1, i128, i16, i32, i64, multispace0, multispace1};
 use nom::combinator::{map, not, opt, peek};
 use nom::error::context;
-use nom::number::complete::double;
+use nom::number::complete::{double, float};
 use nom::sequence::{delimited, preceded, terminated, tuple};
 use std::fmt::{Debug, Formatter};
 
@@ -29,16 +29,24 @@ pub enum Literal {
     #[default]
     Null,
     Boolean(bool),
+    Tinyint(i16),
+    Smallint(i32),
     Integer(i64),
-    Float(f64),
+    Bigint(i128),
+    Float(f32),
+    Double(f64),
     String(String),
 }
 
 impl std::fmt::Display for Literal {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
+            Literal::Tinyint(i) => write!(f, "{}", i),
+            Literal::Smallint(i) => write!(f, "{}", i),
             Literal::Integer(i) => write!(f, "{}", i),
+            Literal::Bigint(i) => write!(f, "{}", i),
             Literal::Float(float) => write!(f, "{}", float),
+            Literal::Double(float) => write!(f, "{}", float),
             Literal::String(s) => write!(f, "{}", s),
             Literal::Null => write!(f, "NULL"),
             Literal::Boolean(bool) => write!(f, "{}", bool),
@@ -277,10 +285,23 @@ fn literal(i: &str) -> IResult<&str, Literal> {
         "literal",
         alt((
             map(
+                tuple((i16, not(alt((tag("."), tag_no_case("e")))))),
+                |(integer, _)| Literal::Tinyint(integer),
+            ),
+            map(
+                tuple((i32, not(alt((tag("."), tag_no_case("e")))))),
+                |(integer, _)| Literal::Smallint(integer),
+            ),
+            map(
                 tuple((i64, not(alt((tag("."), tag_no_case("e")))))),
                 |(integer, _)| Literal::Integer(integer),
             ),
-            map(double, Literal::Float),
+            map(
+                tuple((i128, not(alt((tag("."), tag_no_case("e")))))),
+                |(integer, _)| Literal::Bigint(integer),
+            ),
+            map(float, Literal::Float),
+            map(double, Literal::Double),
             map(delimited(tag("'"), alphanumeric1, tag("'")), |s: &str| {
                 Literal::String(s.to_string())
             }),
@@ -417,32 +438,32 @@ mod tests {
     #[test]
     fn literal() {
         assert_eq!(super::literal("1.0").unwrap().1, Literal::Float(1.0));
-        assert_eq!(super::literal("1").unwrap().1, Literal::Integer(1));
+        assert_eq!(super::literal("1").unwrap().1, Literal::Tinyint(1));
     }
     #[test]
     fn arith_expression() {
         let input = vec!["1+2*3", "(1+2)*3", "(1.0+2)*3"];
         let output = vec![
             Ok(Expression::Operation(Operation::Add(
-                Box::new(Expression::Literal(Literal::Integer(1))),
+                Box::new(Expression::Literal(Literal::Tinyint(1))),
                 Box::new(Expression::Operation(Operation::Multiply(
-                    Box::new(Expression::Literal(Literal::Integer(2))),
-                    Box::new(Expression::Literal(Literal::Integer(3))),
+                    Box::new(Expression::Literal(Literal::Tinyint(2))),
+                    Box::new(Expression::Literal(Literal::Tinyint(3))),
                 ))),
             ))),
             Ok(Expression::Operation(Operation::Multiply(
                 Box::new(Expression::Operation(Operation::Add(
-                    Box::new(Expression::Literal(Literal::Integer(1))),
-                    Box::new(Expression::Literal(Literal::Integer(2))),
+                    Box::new(Expression::Literal(Literal::Tinyint(1))),
+                    Box::new(Expression::Literal(Literal::Tinyint(2))),
                 ))),
-                Box::new(Expression::Literal(Literal::Integer(3))),
+                Box::new(Expression::Literal(Literal::Tinyint(3))),
             ))),
             Ok(Expression::Operation(Operation::Multiply(
                 Box::new(Expression::Operation(Operation::Add(
                     Box::new(Expression::Literal(Literal::Float(1.0))),
-                    Box::new(Expression::Literal(Literal::Integer(2))),
+                    Box::new(Expression::Literal(Literal::Tinyint(2))),
                 ))),
-                Box::new(Expression::Literal(Literal::Integer(3))),
+                Box::new(Expression::Literal(Literal::Tinyint(3))),
             ))),
         ];
         assert_eq!(
