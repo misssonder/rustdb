@@ -400,7 +400,7 @@ where a.attendance>=75;";
                 Some("attendance".to_string()),
                 "a".to_string(),
             )),
-            Box::new(Expression::Literal(Literal::Integer(75))),
+            Box::new(Expression::Literal(Literal::Tinyint(75))),
         )));
         assert_eq!(parsed.select, select_item);
         assert_eq!(parsed.from, from);

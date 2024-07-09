@@ -2,10 +2,10 @@ use crate::sql::parser::keyword::Keyword;
 use crate::sql::parser::{identifier, IResult};
 use nom::branch::alt;
 use nom::bytes::complete::{tag, tag_no_case};
-use nom::character::complete::{alphanumeric1, i64, multispace0, multispace1};
+use nom::character::complete::{alphanumeric1, i128, i16, i32, i64, multispace0, multispace1};
 use nom::combinator::{map, not, opt, peek};
 use nom::error::context;
-use nom::number::complete::double;
+use nom::number::complete::{double, float};
 use nom::sequence::{delimited, preceded, terminated, tuple};
 use std::fmt::{Debug, Formatter};
 
@@ -285,9 +285,22 @@ fn literal(i: &str) -> IResult<&str, Literal> {
         "literal",
         alt((
             map(
+                tuple((i16, not(alt((tag("."), tag_no_case("e")))))),
+                |(integer, _)| Literal::Tinyint(integer),
+            ),
+            map(
+                tuple((i32, not(alt((tag("."), tag_no_case("e")))))),
+                |(integer, _)| Literal::Smallint(integer),
+            ),
+            map(
                 tuple((i64, not(alt((tag("."), tag_no_case("e")))))),
                 |(integer, _)| Literal::Integer(integer),
             ),
+            map(
+                tuple((i128, not(alt((tag("."), tag_no_case("e")))))),
+                |(integer, _)| Literal::Bigint(integer),
+            ),
+            map(float, Literal::Float),
             map(double, Literal::Double),
             map(delimited(tag("'"), alphanumeric1, tag("'")), |s: &str| {
                 Literal::String(s.to_string())
@@ -424,33 +437,33 @@ mod tests {
     }
     #[test]
     fn literal() {
-        assert_eq!(super::literal("1.0").unwrap().1, Literal::Double(1.0));
-        assert_eq!(super::literal("1").unwrap().1, Literal::Integer(1));
+        assert_eq!(super::literal("1.0").unwrap().1, Literal::Float(1.0));
+        assert_eq!(super::literal("1").unwrap().1, Literal::Tinyint(1));
     }
     #[test]
     fn arith_expression() {
         let input = vec!["1+2*3", "(1+2)*3", "(1.0+2)*3"];
         let output = vec![
             Ok(Expression::Operation(Operation::Add(
-                Box::new(Expression::Literal(Literal::Integer(1))),
+                Box::new(Expression::Literal(Literal::Tinyint(1))),
                 Box::new(Expression::Operation(Operation::Multiply(
-                    Box::new(Expression::Literal(Literal::Integer(2))),
-                    Box::new(Expression::Literal(Literal::Integer(3))),
+                    Box::new(Expression::Literal(Literal::Tinyint(2))),
+                    Box::new(Expression::Literal(Literal::Tinyint(3))),
                 ))),
             ))),
             Ok(Expression::Operation(Operation::Multiply(
                 Box::new(Expression::Operation(Operation::Add(
-                    Box::new(Expression::Literal(Literal::Integer(1))),
-                    Box::new(Expression::Literal(Literal::Integer(2))),
+                    Box::new(Expression::Literal(Literal::Tinyint(1))),
+                    Box::new(Expression::Literal(Literal::Tinyint(2))),
                 ))),
-                Box::new(Expression::Literal(Literal::Integer(3))),
+                Box::new(Expression::Literal(Literal::Tinyint(3))),
             ))),
             Ok(Expression::Operation(Operation::Multiply(
                 Box::new(Expression::Operation(Operation::Add(
-                    Box::new(Expression::Literal(Literal::Double(1.0))),
-                    Box::new(Expression::Literal(Literal::Integer(2))),
+                    Box::new(Expression::Literal(Literal::Float(1.0))),
+                    Box::new(Expression::Literal(Literal::Tinyint(2))),
                 ))),
-                Box::new(Expression::Literal(Literal::Integer(3))),
+                Box::new(Expression::Literal(Literal::Tinyint(3))),
             ))),
         ];
         assert_eq!(
