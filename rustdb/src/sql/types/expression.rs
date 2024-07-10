@@ -1009,5 +1009,37 @@ mod tests {
             );
             assert_eq!(expression.evaluate().unwrap(), Value::Integer(2))
         }
+        {
+            let expression = Expression::Exponentiate(
+                Box::new(Expression::Const(Value::Integer(2))),
+                Box::new(Expression::Const(Value::Integer(2))),
+            );
+            assert_eq!(
+                expression.evaluate().unwrap(),
+                Value::Double(2.0_f64.powf(2.0).into())
+            )
+        }
+        {
+            let expression = Expression::Modulo(
+                Box::new(Expression::Const(Value::Integer(2))),
+                Box::new(Expression::Const(Value::Integer(1))),
+            );
+            assert_eq!(expression.evaluate().unwrap(), Value::Integer(2 % 1))
+        }
+        {
+            let expression = Expression::Factorial(Box::new(Expression::Const(Value::Integer(2))));
+            assert_eq!(
+                expression.evaluate().unwrap(),
+                Value::Integer((1..2).product())
+            )
+        }
+        {
+            let expression = Expression::Negate(Box::new(Expression::Const(Value::Integer(2))));
+            assert_eq!(expression.evaluate().unwrap(), Value::Integer(-2))
+        }
+        {
+            let expression = Expression::Assert(Box::new(Expression::Const(Value::Integer(-2))));
+            assert_eq!(expression.evaluate().unwrap(), Value::Integer(-2))
+        }
     }
 }
