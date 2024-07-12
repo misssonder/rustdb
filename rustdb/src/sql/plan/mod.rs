@@ -6,6 +6,7 @@ use super::{
 use crate::sql::catalog::{Column, Table};
 use crate::sql::parser::ast;
 use crate::sql::parser::ddl::{CreateTable, DropTable};
+use crate::sql::parser::dml::Insert;
 use crate::sql::plan::node::Node;
 use crate::sql::types::Value;
 use ordered_float::OrderedFloat;
@@ -49,6 +50,20 @@ impl Planner {
             ast::Statement::DropTable(DropTable { name, if_exists }) => Ok(Node::DropTable {
                 table: name,
                 if_exists,
+            }),
+            ast::Statement::Insert(Insert {
+                table,
+                columns,
+                values,
+            }) => Ok(Node::Insert {
+                table,
+                columns: columns.unwrap_or_default(),
+                values: values.into_iter().map(|value| {
+                    value
+                        .into_iter()
+                        .map(|expr| self.build_expression(expr))
+                        .collect::<SqlResult<Vec<_>>>()
+                }).collect::<SqlResult<Vec<_>>>()?,
             }),
             _ => unimplemented!(),
         }
