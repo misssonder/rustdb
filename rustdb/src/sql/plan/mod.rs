@@ -6,7 +6,7 @@ use super::{
 use crate::sql::catalog::{Column, Table};
 use crate::sql::parser::ast;
 use crate::sql::parser::ddl::{CreateTable, DropTable};
-use crate::sql::parser::dml::Insert;
+use crate::sql::parser::dml::{Delete, Insert};
 use crate::sql::plan::node::Node;
 use crate::sql::types::Value;
 use ordered_float::OrderedFloat;
@@ -58,12 +58,26 @@ impl Planner {
             }) => Ok(Node::Insert {
                 table,
                 columns: columns.unwrap_or_default(),
-                values: values.into_iter().map(|value| {
-                    value
-                        .into_iter()
+                values: values
+                    .into_iter()
+                    .map(|value| {
+                        value
+                            .into_iter()
+                            .map(|expr| self.build_expression(expr))
+                            .collect::<SqlResult<Vec<_>>>()
+                    })
+                    .collect::<SqlResult<Vec<_>>>()?,
+            }),
+            ast::Statement::Delete(Delete { table, r#where }) => Ok(Node::Delete {
+                table: table.clone(),
+                source: Node::Scan {
+                    table,
+                    alias: None,
+                    filter: r#where
                         .map(|expr| self.build_expression(expr))
-                        .collect::<SqlResult<Vec<_>>>()
-                }).collect::<SqlResult<Vec<_>>>()?,
+                        .transpose()?,
+                }
+                .into(),
             }),
             _ => unimplemented!(),
         }
