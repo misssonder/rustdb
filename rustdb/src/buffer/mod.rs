@@ -3,7 +3,7 @@ use std::borrow::Borrow;
 use std::hash::{Hash, Hasher};
 use thiserror::Error;
 
-pub mod buffer_poll_manager;
+pub mod buffer_pool_manager;
 mod lru_k_replacer;
 mod lru_replacer;
 
