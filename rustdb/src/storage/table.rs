@@ -1,4 +1,4 @@
-use crate::buffer::buffer_poll_manager::{
+use crate::buffer::buffer_pool_manager::{
     BufferPoolManager, OwnedPageDataReadGuard, OwnedPageDataWriteGuard, PageRef,
 };
 use crate::encoding::encoded_size::EncodedSize;

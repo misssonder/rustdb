@@ -1,4 +1,4 @@
-use crate::buffer::buffer_poll_manager::BufferPoolManager;
+use crate::buffer::buffer_pool_manager::BufferPoolManager;
 use crate::sql::types::Value;
 use crate::storage::index::Index;
 use crate::storage::page::column::Column;
